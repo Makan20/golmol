@@ -14,7 +14,7 @@ import com.example.nargesapp.data.model.Transaction
 
 @Database(
     entities = [Transaction::class, Account::class, ShoppingItem::class, Debt::class, DebtPayment::class, DebtNotification::class],
-    version = 12,
+    version = 13,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
