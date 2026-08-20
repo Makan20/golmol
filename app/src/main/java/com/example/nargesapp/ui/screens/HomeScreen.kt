@@ -668,10 +668,6 @@ fun PeriodChartSection(period: HomePeriod, periodDates: List<String>, transactio
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text("تراکنشی در این بازه ثبت نشده", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
                 }
-            } else if (period == HomePeriod.DAY) {
-                Box(modifier = Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
-                    DayDonutChart(income = totalPeriodIncome, expense = totalPeriodExpense)
-                }
             } else {
                 var selectedIndex by remember(periodDates) { mutableStateOf<Int?>(null) }
 
@@ -679,7 +675,23 @@ fun PeriodChartSection(period: HomePeriod, periodDates: List<String>, transactio
                 val incomeByBucket: List<Long>
                 val expenseByBucket: List<Long>
 
-                if (period == HomePeriod.WEEK) {
+                                    if (period == HomePeriod.DAY) {
+                        labels = (0..7).map { b ->
+                            PersianDateUtils.toPersianDigits(String.format("%02d تا %02d", b * 3, b * 3 + 3))
+                        }
+                        incomeByBucket = (0..7).map { b ->
+                            periodTransactions.filter {
+                                it.type == TransactionType.INCOME &&
+                                    (it.time.split(":").firstOrNull()?.toIntOrNull()?.div(3) == b)
+                            }.sumOf { it.amount }
+                        }
+                        expenseByBucket = (0..7).map { b ->
+                            periodTransactions.filter {
+                                it.type == TransactionType.EXPENSE &&
+                                    (it.time.split(":").firstOrNull()?.toIntOrNull()?.div(3) == b)
+                            }.sumOf { it.amount }
+                        }
+                    } else if (period == HomePeriod.WEEK) {
                     labels = PersianDateUtils.getWeekDays()
                     incomeByBucket = periodDates.map { date -> periodTransactions.filter { it.type == TransactionType.INCOME && it.date == date }.sumOf { it.amount } }
                     expenseByBucket = periodDates.map { date -> periodTransactions.filter { it.type == TransactionType.EXPENSE && it.date == date }.sumOf { it.amount } }
@@ -732,7 +744,7 @@ fun PeriodChartSection(period: HomePeriod, periodDates: List<String>, transactio
                         labels.forEachIndexed { index, label ->
                             Text(
                                 label,
-                                style = MaterialTheme.typography.labelMedium.copy(fontSize = if (period == HomePeriod.MONTH) 10.sp else 14.sp),
+                                style = MaterialTheme.typography.labelMedium.copy(fontSize = if (period == HomePeriod.WEEK) 14.sp else 10.sp),
                                 color = if (selectedIndex == index) TextPrimary else TextTertiary,
                                 fontWeight = if (selectedIndex == index) FontWeight.Bold else FontWeight.Medium,
                                 textAlign = TextAlign.Center,
