@@ -14,6 +14,7 @@ data class Transaction(
     val type: TransactionType,
     val category: String,
     val date: String,
+        val time: String = "",
     val note: String = "",
     val accountId: Int? = null,
     // اگر این تراکنش نتیجه‌ی تسویه‌ی یک بدهی/طلب/قسط باشد، شناسه‌ی همان مورد اینجا ذخیره می‌شود
