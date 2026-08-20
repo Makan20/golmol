@@ -1,6 +1,7 @@
 package com.example.nargesapp.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.animation.core.keyframes
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.HazeStyle
@@ -498,14 +499,18 @@ fun PeriodToggle(selected: HomePeriod, onSelect: (HomePeriod) -> Unit) {
 @Composable
 private fun PeriodToggleButton(label: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
     val backgroundColor by animateColorAsState(
-        targetValue = if (selected) LightGreen else Color.Transparent,
+        targetValue = if (selected) LightGreen else LightGreen.copy(alpha = 0f),
         label = "periodToggleBg"
     )
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
             .background(backgroundColor)
-            .clickable(onClick = onClick)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            )
             .padding(vertical = 9.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -518,11 +523,15 @@ private fun PeriodToggleButton(label: String, selected: Boolean, modifier: Modif
         )
     }
 }
-
 @Composable
-fun PeriodNavigator(period: HomePeriod, offset: Int, onPrevious: () -> Unit, onNext: () -> Unit) {
+fun PeriodNavigator(
+    period: HomePeriod,
+    offset: Int,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit
+) {
     val label = remember(period, offset) { periodLabel(period, offset) }
-    val isAtPresent = offset >= 0
+    val isAtPresent = offset == 0
 
     CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Rtl) {
         Row(
@@ -530,15 +539,28 @@ fun PeriodNavigator(period: HomePeriod, offset: Int, onPrevious: () -> Unit, onN
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = onPrevious) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowForwardIos, "بازه‌ی قبل", tint = TextSecondary, modifier = Modifier.size(16.dp))
-            }
-            Text(label, style = MaterialTheme.typography.bodyMedium, color = TextPrimary, fontWeight = FontWeight.Bold, fontFamily = Vazirmatn)
+            // دکمه سمت راست: رفتن به آینده — فلش رو به بیرون
             IconButton(onClick = onNext, enabled = !isAtPresent) {
                 Icon(
                     Icons.AutoMirrored.Outlined.ArrowBackIos,
-                    "بازه‌ی بعد",
+                    contentDescription = "بعدی",
                     tint = if (isAtPresent) TextTertiary.copy(alpha = 0.4f) else TextSecondary,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+            Text(
+                label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = TextPrimary,
+                fontWeight = FontWeight.Bold,
+                fontFamily = Vazirmatn
+            )
+            // دکمه سمت چپ: رفتن به گذشته — فلش رو به بیرون
+            IconButton(onClick = onPrevious) {
+                Icon(
+                    Icons.AutoMirrored.Outlined.ArrowForwardIos,
+                    contentDescription = "قبلی",
+                    tint = TextSecondary,
                     modifier = Modifier.size(16.dp)
                 )
             }
@@ -663,8 +685,29 @@ fun PeriodChartSection(period: HomePeriod, periodDates: List<String>, transactio
                     expenseByBucket = periodDates.map { date -> periodTransactions.filter { it.type == TransactionType.EXPENSE && it.date == date }.sumOf { it.amount } }
                 } else {
                     // برای ماه: هر هفته یک میله (نه هر روز، تا نمودار شلوغ نشود)
-                    val weeksInMonth = periodDates.chunked(7)
-                    labels = weeksInMonth.mapIndexed { index, _ -> "هفته ${PersianDateUtils.toPersianDigits((index + 1).toString())}" }
+                    val weeksInMonth = periodDates.groupBy { date ->
+    val day = date.split("/").last().toIntOrNull() ?: 0
+    when {
+        day <= 7 -> 0
+        day <= 14 -> 1
+        day <= 21 -> 2
+        day <= 29 -> 3
+        else -> 4
+    }
+}.toSortedMap().values.toList()
+                    labels = weeksInMonth.mapIndexed { index, week ->
+    if (index == weeksInMonth.lastIndex && week.size < 7) {
+        val firstDay = week.first().split("/").last().toIntOrNull() ?: 0
+        val lastDay = week.last().split("/").last().toIntOrNull() ?: 0
+        if (firstDay == lastDay) {
+            PersianDateUtils.toPersianDigits(firstDay.toString())
+        } else {
+            PersianDateUtils.toPersianDigits("$firstDay تا $lastDay")
+        }
+    } else {
+        "هفته " + PersianDateUtils.toPersianDigits((index + 1).toString())
+    }
+}
                     incomeByBucket = weeksInMonth.map { week -> periodTransactions.filter { it.type == TransactionType.INCOME && it.date in week }.sumOf { it.amount } }
                     expenseByBucket = weeksInMonth.map { week -> periodTransactions.filter { it.type == TransactionType.EXPENSE && it.date in week }.sumOf { it.amount } }
                 }
@@ -767,7 +810,7 @@ fun WeeklyBarChart(
     expenseData: List<Long>,
     maxValue: Float,
     selectedDayIndex: Int? = null,
-    onDaySelected: (Int) -> Unit = {}
+    onDaySelected: (Int) -> Unit
 ) {
     val density = LocalDensity.current
     val cornerPx = with(density) { 4.dp.toPx() }
@@ -780,8 +823,8 @@ fun WeeklyBarChart(
                 .pointerInput(barCount) {
                     detectTapGestures { offset ->
                         val groupWidth = size.width / barCount
-                        val tappedIndex = (offset.x / groupWidth).toInt().coerceIn(0, barCount - 1)
-                        onDaySelected(tappedIndex)
+                        val visualIndex = (offset.x / groupWidth).toInt().coerceIn(0, barCount - 1)
+                        onDaySelected(barCount - 1 - visualIndex)
                     }
                 }
         ) {
@@ -793,77 +836,86 @@ fun WeeklyBarChart(
             val totalPairWidth = barWidth * 2 + pairGap
 
             if (selectedDayIndex != null) {
-                val groupCenter = selectedDayIndex * groupWidth + groupWidth / 2
+                val drawIndex = barCount - 1 - selectedDayIndex
+                val groupCenter = drawIndex * groupWidth + groupWidth / 2
                 drawRect(
                     color = TextPrimary.copy(alpha = 0.04f),
-                    topLeft = androidx.compose.ui.geometry.Offset(groupCenter - groupWidth / 2, 0f),
-                    size = androidx.compose.ui.geometry.Size(groupWidth, height)
+                    topLeft = Offset(groupCenter - groupWidth / 2, 0f),
+                    size = Size(groupWidth, height)
                 )
             }
 
             incomeData.forEachIndexed { index, value ->
-                val groupCenter = index * groupWidth + groupWidth / 2
+                val drawIndex = barCount - 1 - index
+                val groupCenter = drawIndex * groupWidth + groupWidth / 2
                 val startLeft = groupCenter - totalPairWidth / 2
                 val barHeight = if (maxValue > 0) (value / maxValue) * height else 0f
                 val barTop = height - barHeight
-
                 drawRoundedTopBar(startLeft, barTop, barWidth, barHeight, cornerPx, BarIncomeGreen)
             }
 
             expenseData.forEachIndexed { index, value ->
-                val groupCenter = index * groupWidth + groupWidth / 2
+                val drawIndex = barCount - 1 - index
+                val groupCenter = drawIndex * groupWidth + groupWidth / 2
                 val startLeft = groupCenter - totalPairWidth / 2
                 val barLeft = startLeft + barWidth + pairGap
                 val barHeight = if (maxValue > 0) (value / maxValue) * height else 0f
                 val barTop = height - barHeight
-
                 drawRoundedTopBar(barLeft, barTop, barWidth, barHeight, cornerPx, BarExpensePurple)
             }
         }
 
-        if (selectedDayIndex != null) {
-            val groupFraction = (selectedDayIndex + 0.5f) / barCount
-            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                val tooltipOffsetX = (maxWidth * groupFraction) - 58.dp
-                Column(
-                    modifier = Modifier
-                        .offset(x = tooltipOffsetX.coerceIn(0.dp, (maxWidth - 116.dp).coerceAtLeast(0.dp)), y = 2.dp)
-                        .width(116.dp)
-                        .shadow(elevation = 4.dp, shape = RoundedCornerShape(12.dp), clip = false)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(CardWhite)
-                        .border(1.dp, DividerColor, RoundedCornerShape(12.dp))
-                        .padding(horizontal = 10.dp, vertical = 8.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(BarIncomeGreen))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            formatPersianAmount(incomeData[selectedDayIndex]),
-                            color = TextPrimary,
-                            fontFamily = Vazirmatn,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(BarExpensePurple))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            formatPersianAmount(expenseData[selectedDayIndex]),
-                            color = TextPrimary,
-                            fontFamily = Vazirmatn,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+        // تولتیپ — بیرون LTR تا offset درست حساب شود، داخل RTL تا محتوا مثل قبل بماند
+        CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Ltr) {
+            if (selectedDayIndex != null) {
+                val groupFraction = ((barCount - 1 - selectedDayIndex) + 0.5f) / barCount
+                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                    val tooltipOffsetX = maxWidth * groupFraction - 58.dp
+                    Column(
+horizontalAlignment = Alignment.End,
+                        modifier = Modifier
+                            .offset(
+                                x = tooltipOffsetX.coerceIn(0.dp, (maxWidth - 116.dp).coerceAtLeast(0.dp)),
+                                y = 2.dp
+                            )
+                            .width(116.dp)
+                            .shadow(elevation = 4.dp, shape = RoundedCornerShape(12.dp), clip = false)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(CardWhite)
+                            .border(1.dp, DividerColor, RoundedCornerShape(12.dp))
+                            .padding(horizontal = 10.dp, vertical = 8.dp)
+                    ) {
+                        CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Rtl) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(BarIncomeGreen))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    formatPersianAmount(incomeData[selectedDayIndex]),
+                                    color = TextPrimary,
+                                    fontFamily = Vazirmatn,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(BarExpensePurple))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    formatPersianAmount(expenseData[selectedDayIndex]),
+                                    color = TextPrimary,
+                                    fontFamily = Vazirmatn,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
                     }
                 }
             }
         }
     }
 }
-
 fun DrawScope.drawRoundedTopBar(left: Float, top: Float, width: Float, height: Float, radius: Float, color: Color) {
     if (height <= 0 || width <= 0) return
     val r = radius.coerceAtMost(width / 2).coerceAtMost(height / 2)
