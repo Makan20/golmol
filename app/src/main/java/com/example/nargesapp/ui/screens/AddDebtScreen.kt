@@ -32,6 +32,7 @@ import androidx.compose.material.icons.automirrored.outlined.TrendingUp
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -115,6 +116,7 @@ fun AddDebtScreen(
         mutableStateOf(if (initialAmount > 0L) PersianDateUtils.toPersianDigits(initialAmount.toString()) else "")
     }
     var dueDate by remember { mutableStateOf("") }
+        var dueTime by remember { mutableStateOf("") }
     var reminderEnabled by remember { mutableStateOf(true) }
     var submitStage by remember { mutableStateOf(DebtSubmitStage.IDLE) }
     val submitScope = rememberCoroutineScope()
@@ -215,6 +217,7 @@ fun AddDebtScreen(
                             }
 
                             DebtDateInput(dueDate, accentColor, label = if (isInstallment) "تاریخ سررسید قسط اول" else "تاریخ سررسید") { dueDate = it }
+DebtTimeInput(dueTime, accentColor, label = if (isInstallment) "ساعت سررسید اقساط (اختیاری)" else "ساعت سررسید (اختیاری)") { dueTime = it }
                             if (dueDate.isNotBlank() && (PersianDateUtils.daysUntil(dueDate) ?: 1L) <= 0L) {
                                 Text(
                                     "تاریخ سررسید باید بعد از امروز باشد",
@@ -262,6 +265,7 @@ fun AddDebtScreen(
                                             type = debtType,
                                             installmentCount = installmentCount,
                                             firstDueDate = dueDate,
+                                                                                        dueTime = dueTime.ifBlank { PersianDateUtils.getCurrentTime() },
                                             installmentDayOfMonth = installmentDay,
                                             note = description.trim(),
                                             createdDate = initialDate.ifBlank { PersianDateUtils.getCurrentPersianDate() },
@@ -274,6 +278,7 @@ fun AddDebtScreen(
                                                 amount = parsedAmount,
                                                 type = debtType,
                                                 dueDate = dueDate,
+                                                                                                dueTime = dueTime.ifBlank { PersianDateUtils.getCurrentTime() },
                                                 note = description.trim(),
                                                 createdDate = initialDate.ifBlank { PersianDateUtils.getCurrentPersianDate() },
                                                 reminderEnabled = reminderEnabled
@@ -679,3 +684,50 @@ private fun InstallmentToggleRow(checked: Boolean, accentColor: Color, onChecked
 }
 
 private enum class DebtSubmitStage { IDLE, LOADING, SUCCESS }
+
+@Composable
+private fun DebtTimeInput(
+    value: String,
+    activeColor: Color,
+    label: String = "ساعت سررسید (اختیاری)",
+    onValueChange: (String) -> Unit
+) {
+    var showPicker by remember { mutableStateOf(false) }
+    val hasSelectedTime = value.isNotBlank()
+    Column {
+        Text(label, fontSize = 12.sp, fontFamily = Vazirmatn, color = if (hasSelectedTime) activeColor else TextTertiary, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Right)
+        Spacer(Modifier.height(4.dp))
+        Box(Modifier.fillMaxWidth().then(if (hasSelectedTime) Modifier.border(2.dp, activeColor, RoundedCornerShape(14.dp)) else Modifier)) {
+            OutlinedTextField(
+                value = if (value.isBlank()) "" else PersianDateUtils.toPersianDigits(value),
+                onValueChange = {},
+                enabled = false,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                placeholder = {
+                    Text(
+                        text = "اگر انتخاب نکنی، ساعت الان ثبت می‌شه",
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.Right,
+                        color = TextTertiary,
+                        fontSize = 13.sp,
+                        fontFamily = Vazirmatn
+                    )
+                },
+                trailingIcon = { Icon(Icons.Outlined.Schedule, null, tint = if (hasSelectedTime) activeColor else TextTertiary, modifier = Modifier.size(20.dp)) },
+                textStyle = MaterialTheme.typography.bodyMedium.copy(textAlign = TextAlign.Right, fontSize = 15.sp, fontFamily = Vazirmatn, color = TextPrimary),
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(disabledBorderColor = if (hasSelectedTime) Color.Transparent else DividerColor, disabledContainerColor = Color(0xFFFDFDFD), disabledTextColor = TextPrimary)
+            )
+            Box(Modifier.matchParentSize().clickable { showPicker = true })
+        }
+    }
+    if (showPicker) {
+        TimePickerDialog(
+            initialTime = value,
+            accentColor = activeColor,
+            onDismiss = { showPicker = false },
+            onConfirm = { newTime -> onValueChange(newTime); showPicker = false }
+        )
+    }
+}
