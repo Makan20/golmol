@@ -85,6 +85,7 @@ fun AddTransactionScreen(
     var amount by remember { mutableStateOf(existingTransaction?.amount?.toString()?.let { formatAmountInput(it) } ?: "") }
     var selectedCategory by remember { mutableStateOf<Category?>(null) }
     var date by remember { mutableStateOf(existingTransaction?.date ?: PersianDateUtils.getCurrentPersianDate()) }
+var time by remember { mutableStateOf(existingTransaction?.time ?: "") }
     var note by remember { mutableStateOf(existingTransaction?.note ?: "") }
     var selectedAccountId by remember { mutableStateOf(existingTransaction?.accountId) }
 
@@ -187,6 +188,8 @@ fun AddTransactionScreen(
 
                             DateInput(date, activeColor) { date = it }
                             Spacer(modifier = Modifier.height(14.dp))
+TimeInput(time, activeColor) { time = it }
+Spacer(modifier = Modifier.height(14.dp))
 
                             // انتخاب کارت — در حالت بدهی/طلب دیده می‌شود ولی غیرفعال است
                             val accountEnabled = !isDebtMode
@@ -235,8 +238,9 @@ fun AddTransactionScreen(
                                 selectedType = selectedType,
                                 submitStage = submitStage
                             ) {
-                                val parsedAmount = parsePersianAmount(amount)
-                                if (parsedAmount > 0) {
+    val parsedAmount = parsePersianAmount(amount)
+    val finalTime = time.ifBlank { PersianDateUtils.getCurrentTime() }
+    if (parsedAmount > 0) {
                                     if (isDebtMode) {
     val debtType = if (selectedType == TransactionType.EXPENSE) {
         "payable"
@@ -261,6 +265,7 @@ fun AddTransactionScreen(
                                                     type = selectedType,
                                                     category = selectedCategory!!.name,
                                                     date = date,
+                                                                                                        time = finalTime,
                                                     note = note,
                                                     accountId = selectedAccountId
                                                 )
@@ -277,6 +282,7 @@ fun AddTransactionScreen(
                                                         type = selectedType,
                                                         category = selectedCategory!!.name,
                                                         date = date,
+                                                                                                                time = finalTime,
                                                         note = note,
                                                         accountId = selectedAccountId
                                                     )
@@ -1051,5 +1057,83 @@ fun SubmitButton(
                 }
             }
         }
+    }
+}
+@Composable
+fun TimeInput(value: String, activeColor: Color, onValueChange: (String) -> Unit) {
+    var showPicker by remember { mutableStateOf(false) }
+    val hasSelectedTime = value.isNotBlank()
+
+    Column {
+        Text(
+            "ساعت (اختیاری)",
+            style = MaterialTheme.typography.labelMedium,
+            color = TextSecondary,
+            fontFamily = Vazirmatn,
+            modifier = Modifier.fillMaxWidth(),
+            textAlign = TextAlign.Right
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(
+                    if (hasSelectedTime) Modifier.border(
+                        width = 2.dp,
+                        color = activeColor,
+                        shape = RoundedCornerShape(14.dp)
+                    ) else Modifier
+                )
+        ) {
+            OutlinedTextField(
+                value = if (hasSelectedTime) PersianDateUtils.toPersianDigits(value) else "",
+                onValueChange = {},
+                enabled = false,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    disabledBorderColor = if (hasSelectedTime) Color.Transparent else DividerColor,
+                    disabledContainerColor = Color(0xFFFDFDFD),
+                    disabledTextColor = TextPrimary
+                ),
+                placeholder = {
+                    Text(
+                        "اگر انتخاب نکنی، ساعت الان ثبت می‌شه",
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.Right,
+                        color = TextTertiary,
+                        fontSize = 13.sp,
+                        fontFamily = Vazirmatn
+                    )
+                },
+                textStyle = LocalTextStyle.current.copy(
+                    textAlign = TextAlign.Right,
+                    fontSize = 15.sp,
+                    fontFamily = Vazirmatn
+                ),
+                trailingIcon = {
+                    Icon(
+                        imageVector = Icons.Outlined.Schedule,
+                        contentDescription = null,
+                        tint = if (hasSelectedTime) activeColor else TextTertiary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                },
+                singleLine = true
+            )
+            Box(modifier = Modifier.matchParentSize().clickable { showPicker = true })
+        }
+    }
+
+    if (showPicker) {
+        TimePickerDialog(
+            initialTime = value,
+            accentColor = activeColor,
+            onDismiss = { showPicker = false },
+            onConfirm = { newTime ->
+                onValueChange(newTime)
+                showPicker = false
+            }
+        )
     }
 }
