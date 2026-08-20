@@ -306,23 +306,29 @@ DebtTimeInput(dueTime, accentColor, label = if (isInstallment) "ساعت سرر�
                         contentPadding = PaddingValues(horizontal = 16.dp)
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            when (submitStage) {
-                                DebtSubmitStage.LOADING -> {
-                                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
-                                    Spacer(Modifier.width(8.dp))
-                                    Text("...در حال ثبت", style = MaterialTheme.typography.bodyMedium, color = Color.White, fontWeight = FontWeight.Bold, fontFamily = Vazirmatn)
-                                }
-                                DebtSubmitStage.SUCCESS -> {
-                                    Icon(Icons.Outlined.CheckCircle, null, tint = Color.White, modifier = Modifier.size(18.dp))
-                                    Spacer(Modifier.width(8.dp))
-                                    Text("ثبت شد", style = MaterialTheme.typography.bodyMedium, color = Color.White, fontWeight = FontWeight.Bold, fontFamily = Vazirmatn)
-                                }
-                                DebtSubmitStage.IDLE -> {
-                                    Text(title, style = MaterialTheme.typography.bodyMedium, color = Color.White, fontWeight = FontWeight.Bold, fontFamily = Vazirmatn)
-                                }
-                            }
-                        }
+                                            when (submitStage) {
+                    DebtSubmitStage.LOADING -> {
+                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
+                        Spacer(Modifier.width(8.dp))
+                        Text("در حال ثبت ...", color = Color.White, fontFamily = Vazirmatn, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                     }
+                    DebtSubmitStage.SUCCESS -> {
+                        Text("ثبت شد", color = Color.White, fontFamily = Vazirmatn, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Spacer(Modifier.width(8.dp))
+                        Icon(Icons.Outlined.CheckCircle, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                    }
+                    DebtSubmitStage.IDLE -> {
+                        Text(
+                            title,
+                            color = Color.White,
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp),
+                            fontFamily = Vazirmatn,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
                     Spacer(Modifier.height(28.dp))
                 }
             }
