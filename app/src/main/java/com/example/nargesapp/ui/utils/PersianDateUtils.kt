@@ -5,6 +5,12 @@ import java.util.Date
 import java.util.TimeZone
 
 object PersianDateUtils {
+
+    fun getCurrentTime(): String {
+        val cal = Calendar.getInstance()
+        return String.format("%02d:%02d", cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE))
+    }
+
     val persianMonthNames = listOf(
         "فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور",
         "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"
