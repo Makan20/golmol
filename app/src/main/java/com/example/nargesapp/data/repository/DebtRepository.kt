@@ -54,7 +54,8 @@ object DebtRepository {
         installmentDayOfMonth: Int,
         note: String,
         createdDate: String,
-        reminderEnabled: Boolean
+        reminderEnabled: Boolean,
+        dueTime: String = ""
     ) {
         if (installmentCount < 2) {
             addDebt(
@@ -63,6 +64,7 @@ object DebtRepository {
                     amount = totalAmount,
                     type = type,
                     dueDate = firstDueDate,
+                    dueTime = dueTime,
                     note = note,
                     createdDate = createdDate,
                     reminderEnabled = reminderEnabled
@@ -92,6 +94,7 @@ object DebtRepository {
                 amount = amount,
                 type = type,
                 dueDate = dueDate,
+                dueTime = dueTime,
                 note = note,
                 createdDate = createdDate,
                 reminderEnabled = reminderEnabled,
