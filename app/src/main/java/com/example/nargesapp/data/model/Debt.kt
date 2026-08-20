@@ -16,6 +16,7 @@ data class Debt(
     val amount: Long,
     val type: DebtType,
     val dueDate: String = "",
+        val dueTime: String = "",
     val note: String = "",
     val createdDate: String,
     val isSettled: Boolean = false,
