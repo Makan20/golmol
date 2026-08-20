@@ -238,25 +238,25 @@ Spacer(modifier = Modifier.height(14.dp))
                                 selectedType = selectedType,
                                 submitStage = submitStage
                             ) {
-    val parsedAmount = parsePersianAmount(amount)
-    val finalTime = time.ifBlank { PersianDateUtils.getCurrentTime() }
-    if (parsedAmount > 0) {
+                                    val parsedAmount = parsePersianAmount(amount)
+                                val finalTime = time.ifBlank { PersianDateUtils.getCurrentTime() }
+                                if (parsedAmount > 0) {
                                     if (isDebtMode) {
-    val debtType = if (selectedType == TransactionType.EXPENSE) {
-        "payable"
-    } else {
-        "receivable"
-    }
-
-    val safeTitle = android.net.Uri.encode(title)
-    val safeDate = android.net.Uri.encode(date)
-    val safeNote = android.net.Uri.encode(note)
-
-    navController.navigate(
-        "add_debt/$debtType/$safeTitle/$parsedAmount/$safeDate/$safeNote"
-    )
-} else {
-                                        if (isEditMode) {
+                                        val debtType = if (selectedType == TransactionType.EXPENSE) {
+                                            "payable"
+                                        } else {
+                                            "receivable"
+                                        }
+                                        val safeTitle = android.net.Uri.encode(title)
+                                        val safeDate = android.net.Uri.encode(date)
+                                        val safeNote = android.net.Uri.encode(note)
+                                        navController.navigate(
+                                            "add_debt/$debtType/$safeTitle/$parsedAmount/$safeDate/$safeNote"
+                                        )
+                                    } else if (isEditMode) {
+                                        submitScope.launch {
+                                            submitStage = TransactionSubmitStage.LOADING
+                                            delay(600)
                                             viewModel.updateTransaction(
                                                 Transaction(
                                                     id = transactionId,
@@ -265,39 +265,41 @@ Spacer(modifier = Modifier.height(14.dp))
                                                     type = selectedType,
                                                     category = selectedCategory!!.name,
                                                     date = date,
-                                                                                                        time = finalTime,
+                                                    time = finalTime,
                                                     note = note,
                                                     accountId = selectedAccountId
                                                 )
                                             )
+                                            submitStage = TransactionSubmitStage.SUCCESS
+                                            delay(900)
                                             navController.popBackStack()
-                                        } else {
-                                            submitScope.launch {
-                                                submitStage = TransactionSubmitStage.LOADING
-                                                delay(600)
-                                                viewModel.addTransaction(
-                                                    Transaction(
-                                                        title = title,
-                                                        amount = parsedAmount,
-                                                        type = selectedType,
-                                                        category = selectedCategory!!.name,
-                                                        date = date,
-                                                                                                                time = finalTime,
-                                                        note = note,
-                                                        accountId = selectedAccountId
-                                                    )
+                                        }
+                                    } else {
+                                        submitScope.launch {
+                                            submitStage = TransactionSubmitStage.LOADING
+                                            delay(600)
+                                            viewModel.addTransaction(
+                                                Transaction(
+                                                    title = title,
+                                                    amount = parsedAmount,
+                                                    type = selectedType,
+                                                    category = selectedCategory!!.name,
+                                                    date = date,
+                                                    time = finalTime,
+                                                    note = note,
+                                                    accountId = selectedAccountId
                                                 )
-                                                submitStage = TransactionSubmitStage.SUCCESS
-                                                delay(900)
-                                                navController.navigate("home") {
-                                                    popUpTo("home") { inclusive = true }
-                                                    launchSingleTop = true
-                                                }
+                                            )
+                                            submitStage = TransactionSubmitStage.SUCCESS
+                                            delay(900)
+                                            navController.navigate("home") {
+                                                popUpTo("home") { inclusive = true }
+                                                launchSingleTop = true
                                             }
                                         }
                                     }
                                 }
-                            }
+                                                           }
 
                             Spacer(modifier = Modifier.height(24.dp))
                         }
@@ -1039,13 +1041,13 @@ fun SubmitButton(
                 TransactionSubmitStage.LOADING -> {
                     CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
                     Spacer(Modifier.width(8.dp))
-                    Text("...در حال ثبت", color = Color.White, fontFamily = Vazirmatn, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text(if (isEditMode) "در حال ذخیره ..." else "در حال ثبت ...", color = Color.White, fontFamily = Vazirmatn, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                 }
                 TransactionSubmitStage.SUCCESS -> {
-                    Icon(Icons.Outlined.CheckCircle, null, tint = Color.White, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("ثبت شد", color = Color.White, fontFamily = Vazirmatn, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                }
+    Text(if (isEditMode) "ذخیره شد" else "ثبت شد", color = Color.White, fontFamily = Vazirmatn, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+    Spacer(Modifier.width(8.dp))
+    Icon(Icons.Outlined.CheckCircle, null, tint = Color.White, modifier = Modifier.size(18.dp))
+}
                 TransactionSubmitStage.IDLE -> {
                     Text(
                         label,
