@@ -11,5 +11,6 @@ data class Account(
     val cardNumber: String = "",
     val startingBalance: Long,
     val colorIndex: Int = 0,
-    val startingBalanceDate: String = ""
+    val startingBalanceDate: String = "",
+    val bankKey: String? = null
 )
