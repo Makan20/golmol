@@ -1,6 +1,10 @@
 package com.example.nargesapp.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
+import kotlinx.coroutines.delay
+import androidx.compose.animation.Crossfade
+import com.example.nargesapp.data.model.Transaction
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.animation.core.keyframes
 import dev.chrisbanes.haze.HazeState
@@ -168,34 +172,29 @@ fun HomeScreen(navController: NavController, viewModel: TransactionViewModel) {
                     BalanceCard(totalAccountBalance, accounts.isEmpty(), navController)
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    PeriodToggle(selected = selectedPeriod, onSelect = { selectedPeriod = it })
-                    Spacer(modifier = Modifier.height(10.dp))
-                    PeriodNavigator(
+                                        PeriodHubCard(
                         period = selectedPeriod,
+                        onPeriodSelect = { selectedPeriod = it },
                         offset = periodOffset,
                         onPrevious = { periodOffset -= 1 },
-                        onNext = { if (periodOffset < 0) periodOffset += 1 }
+                        onNext = { if (periodOffset < 0) periodOffset += 1 },
+                        periodDates = periodDates,
+                        transactions = transactions
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
 
                     if (periodOpenDebts.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(12.dp))
                         Box {
                             FlowerDecoration(
                                 modifier = Modifier.align(Alignment.Center).size(22.dp),
                                 color = PrimaryGreen.copy(alpha = 0.14f)
                             )
-                            Column {
-                                StatsRow(totalIncome, totalExpense)
-                                Spacer(modifier = Modifier.height(12.dp))
-                                DebtSummaryRow(
-                                    totalDebtOwed = totalDebtOwed,
-                                    totalDebtReceivable = totalDebtReceivable,
-                                    onClick = { navController.navigate("debts") }
-                                )
-                            }
+                            DebtSummaryRow(
+                                totalDebtOwed = totalDebtOwed,
+                                totalDebtReceivable = totalDebtReceivable,
+                                onClick = { navController.navigate("debts") }
+                            )
                         }
-                    } else {
-                        StatsRow(totalIncome, totalExpense)
                     }
 
                     if (dueSoonCount > 0) {
@@ -205,9 +204,6 @@ fun HomeScreen(navController: NavController, viewModel: TransactionViewModel) {
                             onClick = { navController.navigate("debts") }
                         )
                     }
-
-                    Spacer(modifier = Modifier.height(20.dp))
-                    PeriodChartSection(period = selectedPeriod, periodDates = periodDates, transactions = transactions)
                     Spacer(modifier = Modifier.height(20.dp))
 
                     val debtCategories = setOf("بدهی", "طلب")
@@ -486,7 +482,7 @@ fun PeriodToggle(selected: HomePeriod, onSelect: (HomePeriod) -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = CardWhite)
+        colors = CardDefaults.cardColors(containerColor = BackgroundLight)
     ) {
         Row(modifier = Modifier.fillMaxWidth().padding(5.dp)) {
             PeriodToggleButton("روز", selected == HomePeriod.DAY, Modifier.weight(1f)) { onSelect(HomePeriod.DAY) }
@@ -606,9 +602,37 @@ private fun persianMonthName(month: Int): String {
     )
     return names.getOrElse(month - 1) { "" }
 }
-
 @Composable
-fun PeriodChartSection(period: HomePeriod, periodDates: List<String>, transactions: List<com.example.nargesapp.data.model.Transaction>) {
+fun PeriodHubCard(
+    period: HomePeriod,
+    onPeriodSelect: (HomePeriod) -> Unit,
+    offset: Int,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    periodDates: List<String>,
+    transactions: List<com.example.nargesapp.data.model.Transaction>
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = CardWhite)
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            PeriodToggle(selected = period, onSelect = onPeriodSelect)
+            Spacer(modifier = Modifier.height(6.dp))
+            PeriodNavigator(period = period, offset = offset, onPrevious = onPrevious, onNext = onNext)
+            Spacer(modifier = Modifier.height(4.dp))
+            PeriodChartSection(period = period, periodDates = periodDates, transactions = transactions, compact = true)
+        }
+    }
+}
+@Composable
+fun PeriodChartSection(
+    period: HomePeriod,
+    periodDates: List<String>,
+    transactions: List<com.example.nargesapp.data.model.Transaction>,
+    compact: Boolean = false
+) {
     val periodTransactions = remember(transactions, periodDates) {
         transactions.filter { it.date in periodDates }
     }
@@ -622,48 +646,59 @@ fun PeriodChartSection(period: HomePeriod, periodDates: List<String>, transactio
     }
 
     Column {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text(chartTitle, style = MaterialTheme.typography.titleMedium, color = TextPrimary)
-            Row {
-                ChartLegend("درآمد", IncomeGreen)
-                Spacer(modifier = Modifier.width(12.dp))
-                ChartLegend("هزینه", ExpensePurple)
-            }
-        }
-        Spacer(modifier = Modifier.height(10.dp))
-        if (periodTransactions.isNotEmpty()) {
-            CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Rtl) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(IncomeGreen.copy(alpha = 0.08f))
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("درآمد", style = MaterialTheme.typography.labelSmall, color = TextSecondary, fontFamily = Vazirmatn)
-                        Text(formatPersianAmount(totalPeriodIncome), style = MaterialTheme.typography.labelMedium, color = IncomeGreen, fontFamily = Vazirmatn, fontWeight = FontWeight.Bold)
-                    }
-                    Row(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(ExpensePurple.copy(alpha = 0.08f))
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("هزینه", style = MaterialTheme.typography.labelSmall, color = TextSecondary, fontFamily = Vazirmatn)
-                        Text(formatPersianAmount(totalPeriodExpense), style = MaterialTheme.typography.labelMedium, color = ExpensePurple, fontFamily = Vazirmatn, fontWeight = FontWeight.Bold)
-                    }
+        if (!compact) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(chartTitle, style = MaterialTheme.typography.titleMedium, color = TextPrimary)
+                Row {
+                    ChartLegend("درآمد", IncomeGreen)
+                    Spacer(modifier = Modifier.width(12.dp))
+                    ChartLegend("هزینه", ExpensePurple)
                 }
             }
             Spacer(modifier = Modifier.height(10.dp))
         }
 
-        Card(modifier = Modifier.fillMaxWidth().height(240.dp), shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = CardWhite)) {
+        CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Rtl) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(IncomeGreen.copy(alpha = 0.08f))
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("درآمد", style = MaterialTheme.typography.labelSmall, color = TextSecondary, fontFamily = Vazirmatn)
+                    Crossfade(targetState = totalPeriodIncome, label = "incomeChip") { value ->
+                        Text(formatPersianAmount(value), style = MaterialTheme.typography.labelMedium, color = IncomeGreen, fontFamily = Vazirmatn, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(ExpensePurple.copy(alpha = 0.08f))
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("هزینه", style = MaterialTheme.typography.labelSmall, color = TextSecondary, fontFamily = Vazirmatn)
+                    Crossfade(targetState = totalPeriodExpense, label = "expenseChip") { value ->
+                        Text(formatPersianAmount(value), style = MaterialTheme.typography.labelMedium, color = ExpensePurple, fontFamily = Vazirmatn, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Card(
+            modifier = Modifier.fillMaxWidth().height(if (compact) 190.dp else 240.dp),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = if (compact) Color.Transparent else CardWhite),
+            elevation = CardDefaults.cardElevation(defaultElevation = if (compact) 0.dp else 1.dp)
+        ) {
             if (periodTransactions.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text("تراکنشی در این بازه ثبت نشده", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
@@ -675,51 +710,33 @@ fun PeriodChartSection(period: HomePeriod, periodDates: List<String>, transactio
                 val incomeByBucket: List<Long>
                 val expenseByBucket: List<Long>
 
-                                    if (period == HomePeriod.DAY) {
-                        labels = (0..7).map { b ->
-                            PersianDateUtils.toPersianDigits(String.format("%02d تا %02d", b * 3, b * 3 + 3))
-                        }
-                        incomeByBucket = (0..7).map { b ->
-                            periodTransactions.filter {
-                                it.type == TransactionType.INCOME &&
-                                    (it.time.split(":").firstOrNull()?.toIntOrNull()?.div(3) == b)
-                            }.sumOf { it.amount }
-                        }
-                        expenseByBucket = (0..7).map { b ->
-                            periodTransactions.filter {
-                                it.type == TransactionType.EXPENSE &&
-                                    (it.time.split(":").firstOrNull()?.toIntOrNull()?.div(3) == b)
-                            }.sumOf { it.amount }
-                        }
-                    } else if (period == HomePeriod.WEEK) {
+                if (period == HomePeriod.DAY) {
+                    labels = (0..7).map { b ->
+                        PersianDateUtils.toPersianDigits(String.format("%02d تا %02d", b * 3, b * 3 + 3))
+                    }
+                    incomeByBucket = (0..7).map { b ->
+                        periodTransactions.filter {
+                            it.type == TransactionType.INCOME &&
+                                (it.time.split(":").firstOrNull()?.toIntOrNull()?.div(3) == b)
+                        }.sumOf { it.amount }
+                    }
+                    expenseByBucket = (0..7).map { b ->
+                        periodTransactions.filter {
+                            it.type == TransactionType.EXPENSE &&
+                                (it.time.split(":").firstOrNull()?.toIntOrNull()?.div(3) == b)
+                        }.sumOf { it.amount }
+                    }
+                } else if (period == HomePeriod.WEEK) {
                     labels = PersianDateUtils.getWeekDays()
                     incomeByBucket = periodDates.map { date -> periodTransactions.filter { it.type == TransactionType.INCOME && it.date == date }.sumOf { it.amount } }
                     expenseByBucket = periodDates.map { date -> periodTransactions.filter { it.type == TransactionType.EXPENSE && it.date == date }.sumOf { it.amount } }
                 } else {
-                    // برای ماه: هر هفته یک میله (نه هر روز، تا نمودار شلوغ نشود)
-                    val weeksInMonth = periodDates.groupBy { date ->
-    val day = date.split("/").last().toIntOrNull() ?: 0
-    when {
-        day <= 7 -> 0
-        day <= 14 -> 1
-        day <= 21 -> 2
-        day <= 29 -> 3
-        else -> 4
-    }
-}.toSortedMap().values.toList()
-                    labels = weeksInMonth.mapIndexed { index, week ->
-    if (index == weeksInMonth.lastIndex && week.size < 7) {
-        val firstDay = week.first().split("/").last().toIntOrNull() ?: 0
-        val lastDay = week.last().split("/").last().toIntOrNull() ?: 0
-        if (firstDay == lastDay) {
-            PersianDateUtils.toPersianDigits(firstDay.toString())
-        } else {
-            PersianDateUtils.toPersianDigits("$firstDay تا $lastDay")
-        }
-    } else {
-        "هفته " + PersianDateUtils.toPersianDigits((index + 1).toString())
-    }
-}
+                    val weeksInMonth = periodDates.chunked(7)
+                    labels = weeksInMonth.map { week ->
+                        val firstDay = week.first().split("/").last().toIntOrNull() ?: 0
+                        val lastDay = week.last().split("/").last().toIntOrNull() ?: 0
+                        PersianDateUtils.toPersianDigits("$firstDay-$lastDay")
+                    }
                     incomeByBucket = weeksInMonth.map { week -> periodTransactions.filter { it.type == TransactionType.INCOME && it.date in week }.sumOf { it.amount } }
                     expenseByBucket = weeksInMonth.map { week -> periodTransactions.filter { it.type == TransactionType.EXPENSE && it.date in week }.sumOf { it.amount } }
                 }
@@ -729,7 +746,7 @@ fun PeriodChartSection(period: HomePeriod, periodDates: List<String>, transactio
                     if (max > 0) max else 1
                 }
 
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(modifier = Modifier.padding(if (compact) 4.dp else 16.dp)) {
                     Box(modifier = Modifier.weight(1f)) {
                         WeeklyBarChart(
                             incomeData = incomeByBucket,
@@ -757,7 +774,6 @@ fun PeriodChartSection(period: HomePeriod, periodDates: List<String>, transactio
         }
     }
 }
-
 @Composable
 fun DayDonutChart(income: Long, expense: Long) {
     val total = income + expense
@@ -822,12 +838,38 @@ fun WeeklyBarChart(
     expenseData: List<Long>,
     maxValue: Float,
     selectedDayIndex: Int? = null,
-    onDaySelected: (Int) -> Unit
+    onDaySelected: (Int) -> Unit = {}
 ) {
     val density = LocalDensity.current
     val cornerPx = with(density) { 4.dp.toPx() }
     val barCount = incomeData.size
 
+        // با هر ضربه یا تغییر داده، میله‌ها از صفر پلکانی رشد می‌کنن (مثل پروتوتایپ)
+    val incomeFractions = (0 until 8).map { index ->
+        val anim = remember { Animatable(0f) }
+        val target = if (index < barCount && maxValue > 0) incomeData[index].toFloat() / maxValue else 0f
+        LaunchedEffect(target, selectedDayIndex) {
+            anim.snapTo(0f)
+            delay(index * 35L)
+            anim.animateTo(target, animationSpec = tween(durationMillis = 450, easing = FastOutSlowInEasing))
+        }
+        anim.value
+    }
+    val expenseFractions = (0 until 8).map { index ->
+        val anim = remember { Animatable(0f) }
+        val target = if (index < barCount && maxValue > 0) expenseData[index].toFloat() / maxValue else 0f
+        LaunchedEffect(target, selectedDayIndex) {
+            anim.snapTo(0f)
+            delay(index * 35L)
+            anim.animateTo(target, animationSpec = tween(durationMillis = 450, easing = FastOutSlowInEasing))
+        }
+        anim.value
+    }
+
+    val currentOnDaySelected by rememberUpdatedState(onDaySelected)
+
+    // Canvas با مختصات فیزیکی (چپ‌به‌راست) می‌کشه ولی لیبل‌ها RTL هستن (شنبه = ایندکس ۰ = راست)
+    // پس همه‌جا ایندکس منطقی به فیزیکی تبدیل می‌شه: physical = barCount - 1 - logical
     Box(modifier = Modifier.fillMaxSize()) {
         Canvas(
             modifier = Modifier
@@ -835,8 +877,8 @@ fun WeeklyBarChart(
                 .pointerInput(barCount) {
                     detectTapGestures { offset ->
                         val groupWidth = size.width / barCount
-                        val visualIndex = (offset.x / groupWidth).toInt().coerceIn(0, barCount - 1)
-                        onDaySelected(barCount - 1 - visualIndex)
+                        val rawIndex = (offset.x / groupWidth).toInt().coerceIn(0, barCount - 1)
+                        currentOnDaySelected(barCount - 1 - rawIndex)
                     }
                 }
         ) {
@@ -848,48 +890,47 @@ fun WeeklyBarChart(
             val totalPairWidth = barWidth * 2 + pairGap
 
             if (selectedDayIndex != null) {
-                val drawIndex = barCount - 1 - selectedDayIndex
-                val groupCenter = drawIndex * groupWidth + groupWidth / 2
+                val physicalIndex = barCount - 1 - selectedDayIndex
+                val groupCenter = physicalIndex * groupWidth + groupWidth / 2
                 drawRect(
                     color = TextPrimary.copy(alpha = 0.04f),
-                    topLeft = Offset(groupCenter - groupWidth / 2, 0f),
-                    size = Size(groupWidth, height)
+                    topLeft = androidx.compose.ui.geometry.Offset(groupCenter - groupWidth / 2, 0f),
+                    size = androidx.compose.ui.geometry.Size(groupWidth, height)
                 )
             }
 
-            incomeData.forEachIndexed { index, value ->
-                val drawIndex = barCount - 1 - index
-                val groupCenter = drawIndex * groupWidth + groupWidth / 2
+            incomeData.forEachIndexed { index, _ ->
+                val fraction = incomeFractions[index]
+                val physicalIndex = barCount - 1 - index
+                val groupCenter = physicalIndex * groupWidth + groupWidth / 2
                 val startLeft = groupCenter - totalPairWidth / 2
-                val barHeight = if (maxValue > 0) (value / maxValue) * height else 0f
+                val barHeight = fraction * height
                 val barTop = height - barHeight
                 drawRoundedTopBar(startLeft, barTop, barWidth, barHeight, cornerPx, BarIncomeGreen)
             }
 
-            expenseData.forEachIndexed { index, value ->
-                val drawIndex = barCount - 1 - index
-                val groupCenter = drawIndex * groupWidth + groupWidth / 2
+            expenseData.forEachIndexed { index, _ ->
+                val fraction = expenseFractions[index]
+                val physicalIndex = barCount - 1 - index
+                val groupCenter = physicalIndex * groupWidth + groupWidth / 2
                 val startLeft = groupCenter - totalPairWidth / 2
                 val barLeft = startLeft + barWidth + pairGap
-                val barHeight = if (maxValue > 0) (value / maxValue) * height else 0f
+                val barHeight = fraction * height
                 val barTop = height - barHeight
                 drawRoundedTopBar(barLeft, barTop, barWidth, barHeight, cornerPx, BarExpensePurple)
             }
         }
 
-        // تولتیپ — بیرون LTR تا offset درست حساب شود، داخل RTL تا محتوا مثل قبل بماند
-        CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Ltr) {
-            if (selectedDayIndex != null) {
-                val groupFraction = ((barCount - 1 - selectedDayIndex) + 0.5f) / barCount
+        if (selectedDayIndex != null) {
+            // موقعیت تولتیپ توی محیط LTR حساب می‌شه تا کاملاً فیزیکی و دقیق باشه
+            CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Ltr) {
                 BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                    val tooltipOffsetX = maxWidth * groupFraction - 58.dp
+                    val physicalFraction = (barCount - 1 - selectedDayIndex + 0.5f) / barCount
+                    val tooltipX = ((maxWidth * physicalFraction) - 58.dp)
+                        .coerceIn(0.dp, (maxWidth - 116.dp).coerceAtLeast(0.dp))
                     Column(
-horizontalAlignment = Alignment.End,
                         modifier = Modifier
-                            .offset(
-                                x = tooltipOffsetX.coerceIn(0.dp, (maxWidth - 116.dp).coerceAtLeast(0.dp)),
-                                y = 2.dp
-                            )
+                            .offset(x = tooltipX, y = 2.dp)
                             .width(116.dp)
                             .shadow(elevation = 4.dp, shape = RoundedCornerShape(12.dp), clip = false)
                             .clip(RoundedCornerShape(12.dp))
@@ -897,30 +938,33 @@ horizontalAlignment = Alignment.End,
                             .border(1.dp, DividerColor, RoundedCornerShape(12.dp))
                             .padding(horizontal = 10.dp, vertical = 8.dp)
                     ) {
-                        CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Rtl) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(BarIncomeGreen))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    formatPersianAmount(incomeData[selectedDayIndex]),
-                                    color = TextPrimary,
-                                    fontFamily = Vazirmatn,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(BarExpensePurple))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    formatPersianAmount(expenseData[selectedDayIndex]),
-                                    color = TextPrimary,
-                                    fontFamily = Vazirmatn,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
+                        // ترتیب دستی: عدد راست‌چین، نقطه سمت راست — مستقل از جهت صفحه
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                formatPersianAmount(incomeData[selectedDayIndex]),
+                                modifier = Modifier.weight(1f),
+                                textAlign = TextAlign.Right,
+                                color = TextPrimary,
+                                fontFamily = Vazirmatn,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(BarIncomeGreen))
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                formatPersianAmount(expenseData[selectedDayIndex]),
+                                modifier = Modifier.weight(1f),
+                                textAlign = TextAlign.Right,
+                                color = TextPrimary,
+                                fontFamily = Vazirmatn,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(BarExpensePurple))
                         }
                     }
                 }
