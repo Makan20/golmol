@@ -66,21 +66,21 @@ private enum class DebtSettleStage { IDLE, LOADING, SUCCESS }
 fun DebtDetailScreen(navController: NavController, debtId: Int) {
     val debts by DebtRepository.debts.collectAsStateWithLifecycle()
 
-val currentDebt = debts.find { it.id == debtId }
+    val currentDebt = debts.find { it.id == debtId }
 
-var lastDebt by remember(debtId) {
-    mutableStateOf<Debt?>(null)
-}
-
-LaunchedEffect(currentDebt) {
-    if (currentDebt != null) {
-        lastDebt = currentDebt
+    var lastDebt by remember(debtId) {
+        mutableStateOf<Debt?>(null)
     }
-}
 
-val debt = currentDebt ?: lastDebt
+    LaunchedEffect(currentDebt) {
+        if (currentDebt != null) {
+            lastDebt = currentDebt
+        }
+    }
 
-if (debt == null) {
+    val debt = currentDebt ?: lastDebt
+
+    if (debt == null) {
         Scaffold(
             containerColor = BackgroundLight,
             topBar = {
@@ -110,6 +110,8 @@ if (debt == null) {
 private fun DebtDetailContent(navController: NavController, debt: Debt) {
     var showDeleteDialog by remember { mutableStateOf(false) }
     var deleteStage by remember { mutableStateOf(DebtDeleteStage.IDLE) }
+    val allDebts by DebtRepository.debts.collectAsStateWithLifecycle()
+    val isInstallment = debt.loanGroupId != null
     var showSettleDialog by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val allPayments by DebtPaymentRepository.payments.collectAsStateWithLifecycle()
@@ -317,10 +319,21 @@ private fun DebtDetailContent(navController: NavController, debt: Debt) {
                     if (deleteStage == DebtDeleteStage.IDLE) showDeleteDialog = false
                 },
                 title = {
-                    Text("حذف طلب یا بدهی", fontFamily = Vazirmatn, fontWeight = FontWeight.Bold, fontSize = 16.sp, textAlign = TextAlign.Right, modifier = Modifier.fillMaxWidth())
+                    Text(
+                        if (isInstallment) "حذف وام" else "حذف طلب یا بدهی",
+                        fontFamily = Vazirmatn, fontWeight = FontWeight.Bold, fontSize = 16.sp,
+                        textAlign = TextAlign.Right, modifier = Modifier.fillMaxWidth()
+                    )
                 },
                 text = {
-                    Text("مورد «${debt.personName}» برای همیشه حذف می‌شود.", fontFamily = Vazirmatn, fontSize = 12.sp, textAlign = TextAlign.Right, modifier = Modifier.fillMaxWidth())
+                    Text(
+                        if (isInstallment)
+                            "این قسط بخشی از وام «${debt.personName}» است. با حذف، کل وام، همهٔ اقساط و تراکنش‌های پرداخت‌شده برای همیشه حذف می‌شوند."
+                        else
+                            "مورد «${debt.personName}» برای همیشه حذف می‌شود.",
+                        fontFamily = Vazirmatn, fontSize = 12.sp,
+                        textAlign = TextAlign.Right, modifier = Modifier.fillMaxWidth()
+                    )
                 },
                 confirmButton = {
                     TextButton(
@@ -329,12 +342,23 @@ private fun DebtDetailContent(navController: NavController, debt: Debt) {
                                 scope.launch {
                                     deleteStage = DebtDeleteStage.LOADING
                                     delay(700)
-                                    DebtRepository.deleteDebt(debt)
+
+                                    val debtsToDelete = if (isInstallment)
+                                        allDebts.filter { it.loanGroupId == debt.loanGroupId }
+                                    else
+                                        listOf(debt)
+
+                                    val ids = debtsToDelete.map { it.id }.toSet()
+                                    TransactionRepository.transactions.value
+                                        .filter { it.debtId != null && it.debtId in ids }
+                                        .forEach { TransactionRepository.deleteTransaction(it) }
+                                    debtsToDelete.forEach { DebtRepository.deleteDebt(it) }
+
                                     deleteStage = DebtDeleteStage.SUCCESS
                                     delay(1200)
                                     showDeleteDialog = false
                                     deleteStage = DebtDeleteStage.IDLE
-                                    navController.popBackStack("debts", inclusive = false)
+                                    navController.popBackStack()
                                 }
                             }
                         },
@@ -383,18 +407,18 @@ private fun DebtDetailContent(navController: NavController, debt: Debt) {
                 )
 
                 TransactionRepository.addTransaction(
-    Transaction(
-        title = if (isReceivable) "وصول طلب از ${debt.personName}" else "پرداخت بدهی به ${debt.personName}",
-        amount = settleAmount,
-        type = if (isReceivable) TransactionType.INCOME else TransactionType.EXPENSE,
-        category = if (isReceivable) "طلب" else "بدهی",
-        date = today,
-        time = PersianDateUtils.getCurrentTime(),   // ← اضافه شد
-        note = debt.note,
-        accountId = accountId,
-        debtId = debt.id                            // ← اضافه شد
-    )
-)
+                    Transaction(
+                        title = if (isReceivable) "وصول طلب از ${debt.personName}" else "پرداخت بدهی به ${debt.personName}",
+                        amount = settleAmount,
+                        type = if (isReceivable) TransactionType.INCOME else TransactionType.EXPENSE,
+                        category = if (isReceivable) "طلب" else "بدهی",
+                        date = today,
+                        time = PersianDateUtils.getCurrentTime(),
+                        note = debt.note,
+                        accountId = accountId,
+                        debtId = debt.id
+                    )
+                )
 
                 DebtPaymentRepository.addPayment(
                     DebtPayment(
