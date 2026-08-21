@@ -659,13 +659,13 @@ fun PeriodChartSection(
         incomeByBucket = (0..7).map { b ->
             periodTransactions.filter {
                 it.type == TransactionType.INCOME &&
-                    (it.time.split(":").firstOrNull()?.toIntOrNull()?.div(3) == b)
+                    ((it.time.split(":").firstOrNull()?.toIntOrNull() ?: 12) / 3) == b
             }.sumOf { it.amount }
         }
         expenseByBucket = (0..7).map { b ->
             periodTransactions.filter {
                 it.type == TransactionType.EXPENSE &&
-                    (it.time.split(":").firstOrNull()?.toIntOrNull()?.div(3) == b)
+                    ((it.time.split(":").firstOrNull()?.toIntOrNull() ?: 12) / 3) == b
             }.sumOf { it.amount }
         }
     } else if (period == HomePeriod.WEEK) {
