@@ -61,8 +61,12 @@ object TransactionRepository {
         .groupBy { it.date }
         .mapValues { entry -> entry.value.sumOf { it.amount } }
 
-    fun clearAll() {
+        fun clearAll() {
         scope.launch { dao.deleteAll() }
+    }
+
+    fun deleteByDebtId(debtId: Int) {
+        scope.launch { dao.deleteByDebtId(debtId) }
     }
 
     // Used only by BackupManager during restore. Suspend (not scope.launch)
