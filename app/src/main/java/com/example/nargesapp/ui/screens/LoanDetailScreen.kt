@@ -29,6 +29,7 @@ import androidx.navigation.NavController
 import com.example.nargesapp.data.model.Debt
 import com.example.nargesapp.data.model.DebtType
 import com.example.nargesapp.data.repository.DebtRepository
+import com.example.nargesapp.data.repository.TransactionRepository
 import com.example.nargesapp.ui.theme.*
 import com.example.nargesapp.ui.utils.PersianDateUtils
 import kotlinx.coroutines.delay
@@ -44,21 +45,47 @@ fun LoanDetailScreen(navController: NavController, loanGroupId: String) {
         .filter { it.loanGroupId == loanGroupId }
         .sortedBy { it.installmentNumber ?: 0 }
 
-    if (installments.isEmpty()) {
-        // این حالت معمولاً بلافاصله بعد از حذف وام رخ می‌دهد (که خودش popBackStack را صدا می‌زند)؛
-        // این fallback فقط برای اطمینان است تا کاربر هرگز صفحه‌ی خالی نبیند
-        LaunchedEffect(loanGroupId) {
-            navController.popBackStack()
+    // آخرین لیست غیرخالی را نگه می‌داریم تا موقع حذفِ وام،
+    // صفحه زودتر از اجرای popBackStack نابود نشود (کوروتین cancel نشود)
+    var lastInstallments by remember { mutableStateOf<List<Debt>>(emptyList()) }
+    LaunchedEffect(installments) {
+        if (installments.isNotEmpty()) lastInstallments = installments
+    }
+
+    val displayInstallments = installments.ifEmpty { lastInstallments }
+
+    if (displayInstallments.isEmpty()) {
+        Scaffold(
+            containerColor = BackgroundLight,
+            topBar = {
+                TopAppBar(
+                    title = { Text("جزئیات وام", color = TextPrimary, fontFamily = Vazirmatn) },
+                    navigationIcon = {
+                        IconButton(onClick = { navController.popBackStack() }) {
+                            Icon(Icons.AutoMirrored.Outlined.ArrowBack, "بازگشت", tint = TextPrimary)
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = BackgroundLight)
+                )
+            }
+        ) { padding ->
+            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                Text("این وام پیدا نشد", color = TextSecondary, fontFamily = Vazirmatn)
+            }
         }
         return
     }
 
-    LoanDetailContent(navController, loanGroupId, installments)
+    LoanDetailContent(navController, loanGroupId, displayInstallments)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun LoanDetailContent(navController: NavController, loanGroupId: String, installments: List<Debt>) {
+private fun LoanDetailContent(
+    navController: NavController,
+    loanGroupId: String,
+    installments: List<Debt>
+) {
     var showDeleteDialog by remember { mutableStateOf(false) }
     var deleteStage by remember { mutableStateOf(LoanDeleteStage.IDLE) }
     val scope = rememberCoroutineScope()
@@ -131,7 +158,6 @@ private fun LoanDetailContent(navController: NavController, loanGroupId: String,
                             fontFamily = Vazirmatn,
                             style = MaterialTheme.typography.bodySmall
                         )
-
                         Spacer(Modifier.height(14.dp))
                         LinearProgressIndicator(
                             progress = { (paidCount.toFloat() / installments.size.toFloat()).coerceIn(0f, 1f) },
@@ -235,7 +261,7 @@ private fun LoanDetailContent(navController: NavController, loanGroupId: String,
                 },
                 text = {
                     Text(
-                        "تمام ${PersianDateUtils.toPersianDigits(installments.size.toString())} قسط این وام برای همیشه حذف می‌شوند.",
+                        "تمام ${PersianDateUtils.toPersianDigits(installments.size.toString())} قسط این وام و تراکنش‌های پرداخت‌شده‌اش برای همیشه حذف می‌شوند.",
                         fontFamily = Vazirmatn,
                         fontSize = 12.sp,
                         textAlign = TextAlign.Right,
@@ -249,6 +275,10 @@ private fun LoanDetailContent(navController: NavController, loanGroupId: String,
                                 scope.launch {
                                     deleteStage = LoanDeleteStage.LOADING
                                     delay(700)
+                                    val ids = installments.map { it.id }.toSet()
+                                    TransactionRepository.transactions.value
+                                        .filter { it.debtId != null && it.debtId in ids }
+                                        .forEach { TransactionRepository.deleteTransaction(it) }
                                     installments.forEach { DebtRepository.deleteDebt(it) }
                                     deleteStage = LoanDeleteStage.SUCCESS
                                     delay(1200)
@@ -329,7 +359,6 @@ private fun InstallmentRow(installment: Debt, accentColor: Color, canSettle: Boo
                     fontSize = 13.sp
                 )
             }
-
             Spacer(Modifier.width(10.dp))
 
             Column(modifier = Modifier.weight(1f)) {
@@ -353,7 +382,6 @@ private fun InstallmentRow(installment: Debt, accentColor: Color, canSettle: Boo
                     )
                 }
             }
-
             Spacer(Modifier.width(8.dp))
 
             Column(horizontalAlignment = Alignment.End) {
