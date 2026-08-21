@@ -1,6 +1,7 @@
 package com.example.nargesapp.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.ui.graphics.PathEffect
 import kotlinx.coroutines.delay
 import androidx.compose.animation.Crossfade
 import com.example.nargesapp.data.model.Transaction
@@ -902,13 +903,13 @@ fun WeeklyBarChart(
     expenseData: List<Long>,
     maxValue: Float,
     selectedDayIndex: Int? = null,
-    onDaySelected: (Int) -> Unit = {}
+    onDaySelected: (Int) -> Unit
 ) {
     val density = LocalDensity.current
     val cornerPx = with(density) { 4.dp.toPx() }
     val barCount = incomeData.size
 
-    val incomeFractions = (0 until 8).map { index ->
+    val incomeFractions: List<Float> = (0 until 8).map { index ->
         val anim = remember { Animatable(0f) }
         val target = if (index < barCount && maxValue > 0) incomeData[index].toFloat() / maxValue else 0f
         LaunchedEffect(target, selectedDayIndex) {
@@ -918,7 +919,8 @@ fun WeeklyBarChart(
         }
         anim.value
     }
-    val expenseFractions = (0 until 8).map { index ->
+
+    val expenseFractions: List<Float> = (0 until 8).map { index ->
         val anim = remember { Animatable(0f) }
         val target = if (index < barCount && maxValue > 0) expenseData[index].toFloat() / maxValue else 0f
         LaunchedEffect(target, selectedDayIndex) {
@@ -931,9 +933,26 @@ fun WeeklyBarChart(
 
     val currentOnDaySelected by rememberUpdatedState(onDaySelected)
 
-    // Canvas با مختصات فیزیکی (چپ‌به‌راست) می‌کشه ولی لیبل‌ها RTL هستن (شنبه = ایندکس ۰ = راست)
-    // پس همه‌جا ایندکس منطقی به فیزیکی تبدیل می‌شه: physical = barCount - 1 - logical
     Box(modifier = Modifier.fillMaxSize()) {
+
+        // ── گل سبز (بالا-چپ) ──
+        WeeklyChartGreenFlower(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(top = 2.dp, start = 2.dp)
+                .size(112.dp),
+            color = IncomeGreen
+        )
+
+        // ── گل بنفش (پایین-راست) ──
+        WeeklyChartPurpleFlower(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(bottom = 0.dp, end = 4.dp)
+                .size(106.dp),
+            color = ExpensePurple
+        )
+
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
@@ -949,16 +968,30 @@ fun WeeklyBarChart(
             val height = size.height
             val groupWidth = width / barCount
             val barWidth = groupWidth * 0.16f
-            val pairGap = with(density) { 2.dp.toPx() }
+            val pairGap = 2.dp.toPx()
             val totalPairWidth = barWidth * 2 + pairGap
+
+            // ── خط‌چین‌های راهنما (پشت میله‌ها) ──
+            val gridLineCount = 4
+            val dashEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 10f), 0f)
+            for (i in 1..gridLineCount) {
+                val y = height * i / (gridLineCount + 1)
+                drawLine(
+                    color = DividerColor,
+                    start = Offset(0f, y),
+                    end = Offset(width, y),
+                    strokeWidth = 1.dp.toPx(),
+                    pathEffect = dashEffect
+                )
+            }
 
             if (selectedDayIndex != null) {
                 val physicalIndex = barCount - 1 - selectedDayIndex
                 val groupCenter = physicalIndex * groupWidth + groupWidth / 2
                 drawRect(
                     color = TextPrimary.copy(alpha = 0.04f),
-                    topLeft = androidx.compose.ui.geometry.Offset(groupCenter - groupWidth / 2, 0f),
-                    size = androidx.compose.ui.geometry.Size(groupWidth, height)
+                    topLeft = Offset(groupCenter - groupWidth / 2, 0f),
+                    size = Size(groupWidth, height)
                 )
             }
 
@@ -985,6 +1018,124 @@ fun WeeklyBarChart(
                 drawRoundedTopBar(barLeft, barTop, barWidth, barHeight, cornerPx, BarExpensePurple.copy(alpha = barAlpha))
             }
         }
+    }
+}
+@Composable
+fun WeeklyChartPurpleFlower(
+    modifier: Modifier = Modifier,
+    color: Color = ExpensePurple
+) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val center = Offset(w * 0.42f, h * 0.34f)
+
+        val stem = Path().apply {
+            moveTo(w * 0.24f, h * 0.98f)
+            quadraticTo(w * 0.22f, h * 0.62f, center.x - w * 0.02f, center.y + h * 0.05f)
+        }
+        drawPath(
+            path = stem,
+            color = color.copy(alpha = 0.11f),
+            style = androidx.compose.ui.graphics.drawscope.Stroke(width = w * 0.014f, cap = StrokeCap.Round)
+        )
+
+        val leaf = Path().apply {
+            moveTo(w * 0.245f, h * 0.74f)
+            quadraticTo(w * 0.06f, h * 0.66f, w * 0.05f, h * 0.52f)
+            quadraticTo(w * 0.20f, h * 0.58f, w * 0.245f, h * 0.74f)
+        }
+        drawPath(leaf, color = color.copy(alpha = 0.07f))
+
+        val outerLength = w * 0.26f
+        val outerWidth = w * 0.115f
+        for (i in 0 until 6) {
+            rotateCanvas(degrees = i * 60f - 20f, pivot = center) {
+                drawOval(
+                    color = color.copy(alpha = 0.08f),
+                    topLeft = Offset(center.x - outerWidth / 2f, center.y - outerLength),
+                    size = Size(outerWidth, outerLength)
+                )
+            }
+        }
+
+        val innerLength = w * 0.17f
+        val innerWidth = w * 0.08f
+        for (i in 0 until 6) {
+            rotateCanvas(degrees = i * 60f + 10f, pivot = center) {
+                drawOval(
+                    color = color.copy(alpha = 0.11f),
+                    topLeft = Offset(center.x - innerWidth / 2f, center.y - innerLength),
+                    size = Size(innerWidth, innerLength)
+                )
+            }
+        }
+
+        drawCircle(color = color.copy(alpha = 0.20f), radius = w * 0.05f, center = center)
+        drawCircle(color = color.copy(alpha = 0.13f), radius = w * 0.028f, center = center)
+    }
+}
+
+@Composable
+fun WeeklyChartGreenFlower(
+    modifier: Modifier = Modifier,
+    color: Color = IncomeGreen
+) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val center = Offset(w * 0.60f, h * 0.42f)
+
+        val stem = Path().apply {
+            moveTo(w * 0.78f, h * 0.99f)
+            quadraticTo(w * 0.82f, h * 0.70f, center.x + w * 0.02f, center.y + h * 0.05f)
+        }
+        drawPath(
+            path = stem,
+            color = color.copy(alpha = 0.10f),
+            style = androidx.compose.ui.graphics.drawscope.Stroke(width = w * 0.013f, cap = StrokeCap.Round)
+        )
+
+        val leafRight = Path().apply {
+            moveTo(w * 0.79f, h * 0.80f)
+            quadraticTo(w * 0.97f, h * 0.74f, w * 0.99f, h * 0.60f)
+            quadraticTo(w * 0.83f, h * 0.64f, w * 0.79f, h * 0.80f)
+        }
+        drawPath(leafRight, color = color.copy(alpha = 0.07f))
+
+        val leafLeft = Path().apply {
+            moveTo(w * 0.76f, h * 0.90f)
+            quadraticTo(w * 0.58f, h * 0.86f, w * 0.55f, h * 0.74f)
+            quadraticTo(w * 0.72f, h * 0.76f, w * 0.76f, h * 0.90f)
+        }
+        drawPath(leafLeft, color = color.copy(alpha = 0.07f))
+
+        val petalLength = w * 0.22f
+        val petalWidth = w * 0.15f
+        for (i in 0 until 5) {
+            rotateCanvas(degrees = i * 72f, pivot = center) {
+                drawOval(
+                    color = color.copy(alpha = 0.08f),
+                    topLeft = Offset(center.x - petalWidth / 2f, center.y - petalLength),
+                    size = Size(petalWidth, petalLength)
+                )
+            }
+        }
+
+        val innerLength = w * 0.14f
+        val innerWidth = w * 0.10f
+        for (i in 0 until 5) {
+            rotateCanvas(degrees = i * 72f + 36f, pivot = center) {
+                drawOval(
+                    color = color.copy(alpha = 0.11f),
+                    topLeft = Offset(center.x - innerWidth / 2f, center.y - innerLength),
+                    size = Size(innerWidth, innerLength)
+                )
+            }
+        }
+
+        drawCircle(color = color.copy(alpha = 0.19f), radius = w * 0.045f, center = center)
+        drawCircle(color = color.copy(alpha = 0.12f), radius = w * 0.024f, center = center)
     }
 }
 fun DrawScope.drawRoundedTopBar(left: Float, top: Float, width: Float, height: Float, radius: Float, color: Color) {
