@@ -645,6 +645,62 @@ fun PeriodChartSection(
         HomePeriod.MONTH -> "نمودار ماهانه"
     }
 
+    var selectedIndex by remember(periodDates) { mutableStateOf<Int?>(null) }
+
+    val labels: List<String>
+    val incomeByBucket: List<Long>
+    val expenseByBucket: List<Long>
+
+    if (period == HomePeriod.DAY) {
+        labels = (0..7).map { b ->
+            PersianDateUtils.toPersianDigits(String.format("%02d تا %02d", b * 3, b * 3 + 3))
+        }
+        incomeByBucket = (0..7).map { b ->
+            periodTransactions.filter {
+                it.type == TransactionType.INCOME &&
+                    (it.time.split(":").firstOrNull()?.toIntOrNull()?.div(3) == b)
+            }.sumOf { it.amount }
+        }
+        expenseByBucket = (0..7).map { b ->
+            periodTransactions.filter {
+                it.type == TransactionType.EXPENSE &&
+                    (it.time.split(":").firstOrNull()?.toIntOrNull()?.div(3) == b)
+            }.sumOf { it.amount }
+        }
+    } else if (period == HomePeriod.WEEK) {
+        labels = PersianDateUtils.getWeekDays()
+        incomeByBucket = periodDates.map { date -> periodTransactions.filter { it.type == TransactionType.INCOME && it.date == date }.sumOf { it.amount } }
+        expenseByBucket = periodDates.map { date -> periodTransactions.filter { it.type == TransactionType.EXPENSE && it.date == date }.sumOf { it.amount } }
+    } else {
+        val weeksInMonth = periodDates.chunked(7)
+        labels = weeksInMonth.map { week ->
+            val firstDay = week.first().split("/").last().toIntOrNull() ?: 0
+            val lastDay = week.last().split("/").last().toIntOrNull() ?: 0
+            PersianDateUtils.toPersianDigits("$firstDay-$lastDay")
+        }
+        incomeByBucket = weeksInMonth.map { week -> periodTransactions.filter { it.type == TransactionType.INCOME && it.date in week }.sumOf { it.amount } }
+        expenseByBucket = weeksInMonth.map { week -> periodTransactions.filter { it.type == TransactionType.EXPENSE && it.date in week }.sumOf { it.amount } }
+    }
+
+    val maxValue = remember(incomeByBucket, expenseByBucket) {
+        val max = (incomeByBucket + expenseByBucket).maxOrNull() ?: 0L
+        if (max > 0) max else 1
+    }
+
+    val chipIncome = selectedIndex?.let { incomeByBucket.getOrNull(it) } ?: totalPeriodIncome
+    val chipExpense = selectedIndex?.let { expenseByBucket.getOrNull(it) } ?: totalPeriodExpense
+    val animatedChipIncome by animateFloatAsState(
+        targetValue = chipIncome.toFloat(),
+        animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing),
+        label = "chipIncomeAnim"
+    )
+    val displayChipIncome = if (animatedChipIncome == chipIncome.toFloat()) chipIncome else animatedChipIncome.toLong()
+    val animatedChipExpense by animateFloatAsState(
+        targetValue = chipExpense.toFloat(),
+        animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing),
+        label = "chipExpenseAnim"
+    )
+    val displayChipExpense = if (animatedChipExpense == chipExpense.toFloat()) chipExpense else animatedChipExpense.toLong()
     Column {
         if (!compact) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -659,7 +715,29 @@ fun PeriodChartSection(
         }
 
         CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Rtl) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                AnimatedVisibility(visible = selectedIndex != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(TextPrimary.copy(alpha = 0.88f))
+                                .clickable { selectedIndex = null }
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                (labels.getOrNull(selectedIndex ?: -1) ?: "") + "  ✕",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.White,
+                                fontFamily = Vazirmatn,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+                }
+
                 Row(
                     modifier = Modifier
                         .weight(1f)
@@ -670,10 +748,10 @@ fun PeriodChartSection(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("درآمد", style = MaterialTheme.typography.labelSmall, color = TextSecondary, fontFamily = Vazirmatn)
-                    Crossfade(targetState = totalPeriodIncome, label = "incomeChip") { value ->
-                        Text(formatPersianAmount(value), style = MaterialTheme.typography.labelMedium, color = IncomeGreen, fontFamily = Vazirmatn, fontWeight = FontWeight.Bold)
-                    }
+                                        Text(formatPersianAmount(displayChipIncome), style = MaterialTheme.typography.labelMedium, color = IncomeGreen, fontFamily = Vazirmatn, fontWeight = FontWeight.Bold)
                 }
+
+                Spacer(modifier = Modifier.width(10.dp))
 
                 Row(
                     modifier = Modifier
@@ -685,9 +763,7 @@ fun PeriodChartSection(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("هزینه", style = MaterialTheme.typography.labelSmall, color = TextSecondary, fontFamily = Vazirmatn)
-                    Crossfade(targetState = totalPeriodExpense, label = "expenseChip") { value ->
-                        Text(formatPersianAmount(value), style = MaterialTheme.typography.labelMedium, color = ExpensePurple, fontFamily = Vazirmatn, fontWeight = FontWeight.Bold)
-                    }
+                                        Text(formatPersianAmount(displayChipExpense), style = MaterialTheme.typography.labelMedium, color = ExpensePurple, fontFamily = Vazirmatn, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -701,51 +777,21 @@ fun PeriodChartSection(
         ) {
             if (periodTransactions.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("تراکنشی در این بازه ثبت نشده", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        FlowerDecoration(
+                            modifier = Modifier.size(52.dp),
+                            color = ExpensePurple.copy(alpha = 0.14f)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "تراکنشی در این بازه ثبت نشده",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = TextSecondary,
+                            fontFamily = Vazirmatn
+                        )
+                    }
                 }
             } else {
-                var selectedIndex by remember(periodDates) { mutableStateOf<Int?>(null) }
-
-                val labels: List<String>
-                val incomeByBucket: List<Long>
-                val expenseByBucket: List<Long>
-
-                if (period == HomePeriod.DAY) {
-                    labels = (0..7).map { b ->
-                        PersianDateUtils.toPersianDigits(String.format("%02d تا %02d", b * 3, b * 3 + 3))
-                    }
-                    incomeByBucket = (0..7).map { b ->
-                        periodTransactions.filter {
-                            it.type == TransactionType.INCOME &&
-                                (it.time.split(":").firstOrNull()?.toIntOrNull()?.div(3) == b)
-                        }.sumOf { it.amount }
-                    }
-                    expenseByBucket = (0..7).map { b ->
-                        periodTransactions.filter {
-                            it.type == TransactionType.EXPENSE &&
-                                (it.time.split(":").firstOrNull()?.toIntOrNull()?.div(3) == b)
-                        }.sumOf { it.amount }
-                    }
-                } else if (period == HomePeriod.WEEK) {
-                    labels = PersianDateUtils.getWeekDays()
-                    incomeByBucket = periodDates.map { date -> periodTransactions.filter { it.type == TransactionType.INCOME && it.date == date }.sumOf { it.amount } }
-                    expenseByBucket = periodDates.map { date -> periodTransactions.filter { it.type == TransactionType.EXPENSE && it.date == date }.sumOf { it.amount } }
-                } else {
-                    val weeksInMonth = periodDates.chunked(7)
-                    labels = weeksInMonth.map { week ->
-                        val firstDay = week.first().split("/").last().toIntOrNull() ?: 0
-                        val lastDay = week.last().split("/").last().toIntOrNull() ?: 0
-                        PersianDateUtils.toPersianDigits("$firstDay-$lastDay")
-                    }
-                    incomeByBucket = weeksInMonth.map { week -> periodTransactions.filter { it.type == TransactionType.INCOME && it.date in week }.sumOf { it.amount } }
-                    expenseByBucket = weeksInMonth.map { week -> periodTransactions.filter { it.type == TransactionType.EXPENSE && it.date in week }.sumOf { it.amount } }
-                }
-
-                val maxValue = remember(incomeByBucket, expenseByBucket) {
-                    val max = (incomeByBucket + expenseByBucket).maxOrNull() ?: 0L
-                    if (max > 0) max else 1
-                }
-
                 Column(modifier = Modifier.padding(if (compact) 4.dp else 16.dp)) {
                     Box(modifier = Modifier.weight(1f)) {
                         WeeklyBarChart(
@@ -844,7 +890,6 @@ fun WeeklyBarChart(
     val cornerPx = with(density) { 4.dp.toPx() }
     val barCount = incomeData.size
 
-        // با هر ضربه یا تغییر داده، میله‌ها از صفر پلکانی رشد می‌کنن (مثل پروتوتایپ)
     val incomeFractions = (0 until 8).map { index ->
         val anim = remember { Animatable(0f) }
         val target = if (index < barCount && maxValue > 0) incomeData[index].toFloat() / maxValue else 0f
@@ -901,73 +946,25 @@ fun WeeklyBarChart(
 
             incomeData.forEachIndexed { index, _ ->
                 val fraction = incomeFractions[index]
+                val barAlpha = if (selectedDayIndex == null || selectedDayIndex == index) 1f else 0.35f
                 val physicalIndex = barCount - 1 - index
                 val groupCenter = physicalIndex * groupWidth + groupWidth / 2
                 val startLeft = groupCenter - totalPairWidth / 2
                 val barHeight = fraction * height
                 val barTop = height - barHeight
-                drawRoundedTopBar(startLeft, barTop, barWidth, barHeight, cornerPx, BarIncomeGreen)
+                drawRoundedTopBar(startLeft, barTop, barWidth, barHeight, cornerPx, BarIncomeGreen.copy(alpha = barAlpha))
             }
 
             expenseData.forEachIndexed { index, _ ->
                 val fraction = expenseFractions[index]
+                val barAlpha = if (selectedDayIndex == null || selectedDayIndex == index) 1f else 0.35f
                 val physicalIndex = barCount - 1 - index
                 val groupCenter = physicalIndex * groupWidth + groupWidth / 2
                 val startLeft = groupCenter - totalPairWidth / 2
                 val barLeft = startLeft + barWidth + pairGap
                 val barHeight = fraction * height
                 val barTop = height - barHeight
-                drawRoundedTopBar(barLeft, barTop, barWidth, barHeight, cornerPx, BarExpensePurple)
-            }
-        }
-
-        if (selectedDayIndex != null) {
-            // موقعیت تولتیپ توی محیط LTR حساب می‌شه تا کاملاً فیزیکی و دقیق باشه
-            CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Ltr) {
-                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                    val physicalFraction = (barCount - 1 - selectedDayIndex + 0.5f) / barCount
-                    val tooltipX = ((maxWidth * physicalFraction) - 58.dp)
-                        .coerceIn(0.dp, (maxWidth - 116.dp).coerceAtLeast(0.dp))
-                    Column(
-                        modifier = Modifier
-                            .offset(x = tooltipX, y = 2.dp)
-                            .width(116.dp)
-                            .shadow(elevation = 4.dp, shape = RoundedCornerShape(12.dp), clip = false)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(CardWhite)
-                            .border(1.dp, DividerColor, RoundedCornerShape(12.dp))
-                            .padding(horizontal = 10.dp, vertical = 8.dp)
-                    ) {
-                        // ترتیب دستی: عدد راست‌چین، نقطه سمت راست — مستقل از جهت صفحه
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                formatPersianAmount(incomeData[selectedDayIndex]),
-                                modifier = Modifier.weight(1f),
-                                textAlign = TextAlign.Right,
-                                color = TextPrimary,
-                                fontFamily = Vazirmatn,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(BarIncomeGreen))
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                formatPersianAmount(expenseData[selectedDayIndex]),
-                                modifier = Modifier.weight(1f),
-                                textAlign = TextAlign.Right,
-                                color = TextPrimary,
-                                fontFamily = Vazirmatn,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(BarExpensePurple))
-                        }
-                    }
-                }
+                drawRoundedTopBar(barLeft, barTop, barWidth, barHeight, cornerPx, BarExpensePurple.copy(alpha = barAlpha))
             }
         }
     }
