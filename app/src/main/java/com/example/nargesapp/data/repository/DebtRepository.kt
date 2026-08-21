@@ -122,11 +122,13 @@ object DebtRepository {
     }
 
     fun deleteDebt(debt: Debt) {
-        scope.launch {
-            dao.delete(debt)
-            appContext?.let { ctx -> DebtReminderScheduler.cancelFor(ctx, debt.id) }
-        }
+    scope.launch {
+        TransactionRepository.deleteByDebtId(debt.id)
+        DebtPaymentRepository.deletePaymentsForDebt(debt.id)   // ← همین اسم
+        dao.delete(debt)
+        appContext?.let { ctx -> DebtReminderScheduler.cancelFor(ctx, debt.id) }
     }
+}
 
     fun getDebtById(id: Int): Debt? = _debts.value.find { it.id == id }
 
