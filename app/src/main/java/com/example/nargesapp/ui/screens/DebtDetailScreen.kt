@@ -358,7 +358,12 @@ private fun DebtDetailContent(navController: NavController, debt: Debt) {
                                     delay(1200)
                                     showDeleteDialog = false
                                     deleteStage = DebtDeleteStage.IDLE
+
+                                    // اگر قسط بود و از صفحه‌ی وام آمده بودیم، صفحه‌ی وام هم بسته شود
+                                    val cameFromLoanDetail = isInstallment &&
+                                        navController.previousBackStackEntry?.destination?.route?.startsWith("loan_detail") == true
                                     navController.popBackStack()
+                                    if (cameFromLoanDetail) navController.popBackStack()
                                 }
                             }
                         },
