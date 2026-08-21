@@ -689,6 +689,7 @@ fun PeriodChartSection(
 
     val chipIncome = selectedIndex?.let { incomeByBucket.getOrNull(it) } ?: totalPeriodIncome
     val chipExpense = selectedIndex?.let { expenseByBucket.getOrNull(it) } ?: totalPeriodExpense
+
     val animatedChipIncome by animateFloatAsState(
         targetValue = chipIncome.toFloat(),
         animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing),
@@ -701,6 +702,7 @@ fun PeriodChartSection(
         label = "chipExpenseAnim"
     )
     val displayChipExpense = if (animatedChipExpense == chipExpense.toFloat()) chipExpense else animatedChipExpense.toLong()
+
     Column {
         if (!compact) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -738,32 +740,48 @@ fun PeriodChartSection(
                     }
                 }
 
-                Row(
+                Column(
                     modifier = Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(14.dp))
                         .background(IncomeGreen.copy(alpha = 0.08f))
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
                 ) {
-                    Text("درآمد", style = MaterialTheme.typography.labelSmall, color = TextSecondary, fontFamily = Vazirmatn)
-                                        Text(formatPersianAmount(displayChipIncome), style = MaterialTheme.typography.labelMedium, color = IncomeGreen, fontFamily = Vazirmatn, fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            FlowerDecoration(modifier = Modifier.size(15.dp), color = IncomeGreen.copy(alpha = 0.45f))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("درآمد", style = MaterialTheme.typography.labelSmall, color = TextSecondary, fontFamily = Vazirmatn)
+                        }
+                        Text(formatPersianAmount(displayChipIncome), style = MaterialTheme.typography.labelMedium, color = IncomeGreen, fontFamily = Vazirmatn, fontWeight = FontWeight.Bold)
+                    }
                 }
 
                 Spacer(modifier = Modifier.width(10.dp))
 
-                Row(
+                Column(
                     modifier = Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(14.dp))
                         .background(ExpensePurple.copy(alpha = 0.08f))
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
                 ) {
-                    Text("هزینه", style = MaterialTheme.typography.labelSmall, color = TextSecondary, fontFamily = Vazirmatn)
-                                        Text(formatPersianAmount(displayChipExpense), style = MaterialTheme.typography.labelMedium, color = ExpensePurple, fontFamily = Vazirmatn, fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            FlowerDecoration(modifier = Modifier.size(15.dp), color = ExpensePurple.copy(alpha = 0.45f))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("هزینه", style = MaterialTheme.typography.labelSmall, color = TextSecondary, fontFamily = Vazirmatn)
+                        }
+                        Text(formatPersianAmount(displayChipExpense), style = MaterialTheme.typography.labelMedium, color = ExpensePurple, fontFamily = Vazirmatn, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }
