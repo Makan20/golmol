@@ -383,17 +383,18 @@ private fun DebtDetailContent(navController: NavController, debt: Debt) {
                 )
 
                 TransactionRepository.addTransaction(
-                    Transaction(
-                        title = if (isReceivable) "وصول طلب از ${debt.personName}" else "پرداخت بدهی به ${debt.personName}",
-                        amount = settleAmount,
-                        type = if (isReceivable) TransactionType.INCOME else TransactionType.EXPENSE,
-                        category = if (isReceivable) "طلب" else "بدهی",
-                        date = today,
-                        note = debt.note,
-                        accountId = accountId,
-                        debtId = debt.id
-                    )
-                )
+    Transaction(
+        title = if (isReceivable) "وصول طلب از ${debt.personName}" else "پرداخت بدهی به ${debt.personName}",
+        amount = settleAmount,
+        type = if (isReceivable) TransactionType.INCOME else TransactionType.EXPENSE,
+        category = if (isReceivable) "طلب" else "بدهی",
+        date = today,
+        time = PersianDateUtils.getCurrentTime(),   // ← اضافه شد
+        note = debt.note,
+        accountId = accountId,
+        debtId = debt.id                            // ← اضافه شد
+    )
+)
 
                 DebtPaymentRepository.addPayment(
                     DebtPayment(
