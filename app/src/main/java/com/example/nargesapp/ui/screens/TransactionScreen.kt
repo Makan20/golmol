@@ -5,7 +5,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -26,18 +25,42 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
+import com.example.nargesapp.data.model.Account
+import com.example.nargesapp.data.model.Debt
 import com.example.nargesapp.data.model.Transaction
 import com.example.nargesapp.data.model.TransactionType
+import com.example.nargesapp.data.repository.DebtRepository
 import com.example.nargesapp.ui.theme.*
 import com.example.nargesapp.ui.utils.PersianDateUtils
 import com.example.nargesapp.ui.viewmodel.TransactionViewModel
 
-enum class PeriodType { WEEK, MONTH, YEAR }
+enum class PeriodType { DAY, WEEK, MONTH, YEAR }
 
-fun filterByPeriod(transactions: List<Transaction>, periodType: PeriodType, year: Int, month: Int): List<Transaction> {
+// فیلتر نوع: null = همه، INCOME/EXPENSE = عادی، DEBT = طلب و بدهی و وام (تراکنش‌هایی که به یک بدهی وصل‌اند)
+enum class TxnFilter { INCOME, EXPENSE, DEBT }
+
+private fun Transaction.matchesFilter(filter: TxnFilter?): Boolean = when (filter) {
+    null -> true
+    TxnFilter.INCOME -> type == TransactionType.INCOME && debtId == null
+    TxnFilter.EXPENSE -> type == TransactionType.EXPENSE && debtId == null
+    TxnFilter.DEBT -> debtId != null
+}
+
+fun filterByPeriod(
+    transactions: List<Transaction>,
+    periodType: PeriodType,
+    year: Int,
+    month: Int,
+    weekOffset: Int = 0,
+    dayOffset: Int = 0
+): List<Transaction> {
     return when (periodType) {
+        PeriodType.DAY -> {
+            val dayDate = PersianDateUtils.addDaysToToday(dayOffset)
+            transactions.filter { it.date == dayDate }
+        }
         PeriodType.WEEK -> {
-            val weekDates = PersianDateUtils.getCurrentWeekDates()
+            val weekDates = PersianDateUtils.getWeekDates(weekOffset)
             transactions.filter { it.date in weekDates }
         }
         PeriodType.MONTH -> transactions.filter { t ->
@@ -58,7 +81,8 @@ fun TransactionScreen(navController: NavController, viewModel: TransactionViewMo
     val listState = rememberLazyListState()
     val transactions by viewModel.transactions.collectAsStateWithLifecycle()
     val accounts by com.example.nargesapp.data.repository.AccountRepository.accounts.collectAsStateWithLifecycle()
-    var filterType by remember { mutableStateOf<TransactionType?>(null) }
+    val allDebts by DebtRepository.debts.collectAsStateWithLifecycle()
+    var filterType by remember { mutableStateOf<TxnFilter?>(null) }
     var showSearch by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var sortOrder by remember { mutableStateOf<SortOrder?>(null) }
@@ -70,24 +94,25 @@ fun TransactionScreen(navController: NavController, viewModel: TransactionViewMo
     }
     var selectedYear by remember { mutableStateOf(currentYearMonth.first) }
     var selectedMonth by remember { mutableStateOf(currentYearMonth.second) }
+    var weekOffset by remember { mutableStateOf(0) }
+    var dayOffset by remember { mutableStateOf(0) }
 
-    val periodFiltered = filterByPeriod(transactions, periodType, selectedYear, selectedMonth)
+    val periodFiltered = filterByPeriod(transactions, periodType, selectedYear, selectedMonth, weekOffset, dayOffset)
 
     val filtered = when {
         searchQuery.isNotBlank() -> {
             transactions.filter { t ->
                 val matchesSearch = t.title.contains(searchQuery, ignoreCase = true) ||
-                    t.category.contains(searchQuery, ignoreCase = true) ||
-                    (accounts.find { it.id == t.accountId }?.name?.contains(searchQuery, ignoreCase = true) == true)
-                matchesSearch && (filterType == null || t.type == filterType)
+                        t.category.contains(searchQuery, ignoreCase = true) ||
+                        (accounts.find { it.id == t.accountId }?.name?.contains(searchQuery, ignoreCase = true) == true)
+                matchesSearch && t.matchesFilter(filterType)
             }
         }
-        filterType != null -> periodFiltered.filter { it.type == filterType }
-        else -> periodFiltered
+        else -> periodFiltered.filter { it.matchesFilter(filterType) }
     }.let { list ->
         when (sortOrder) {
             SortOrder.ASCENDING -> list.sortedBy { it.amount }
-            SortOrder.DESCENDING -> list.sortedBy { it.amount }
+            SortOrder.DESCENDING -> list.sortedByDescending { it.amount }
             null -> list
         }
     }
@@ -148,6 +173,7 @@ fun TransactionScreen(navController: NavController, viewModel: TransactionViewMo
                 modifier = Modifier.align(Alignment.BottomStart).padding(bottom = 60.dp, start = 4.dp).size(44.dp),
                 color = ExpensePurple.copy(alpha = 0.08f)
             )
+
             CompositionLocalProvider(
                 androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Rtl
             ) {
@@ -173,8 +199,8 @@ fun TransactionScreen(navController: NavController, viewModel: TransactionViewMo
                             onSortOrderChange = { newSort ->
                                 sortOrder = newSort
                                 when (newSort) {
-                                    SortOrder.ASCENDING -> filterType = TransactionType.INCOME
-                                    SortOrder.DESCENDING -> filterType = TransactionType.EXPENSE
+                                    SortOrder.ASCENDING -> filterType = TxnFilter.INCOME
+                                    SortOrder.DESCENDING -> filterType = TxnFilter.EXPENSE
                                     null -> Unit
                                 }
                             }
@@ -182,14 +208,13 @@ fun TransactionScreen(navController: NavController, viewModel: TransactionViewMo
                         Spacer(modifier = Modifier.height(12.dp))
                     }
 
-                    // Filter Chips
                     FilterChips(
                         selectedType = filterType,
                         onTypeSelected = { newType ->
                             filterType = newType
                             val mismatch = when (sortOrder) {
-                                SortOrder.ASCENDING -> newType != TransactionType.INCOME
-                                SortOrder.DESCENDING -> newType != TransactionType.EXPENSE
+                                SortOrder.ASCENDING -> newType != TxnFilter.INCOME
+                                SortOrder.DESCENDING -> newType != TxnFilter.EXPENSE
                                 null -> false
                             }
                             if (mismatch) sortOrder = null
@@ -198,6 +223,8 @@ fun TransactionScreen(navController: NavController, viewModel: TransactionViewMo
                         onPeriodSelected = { periodType = it },
                         selectedYear = selectedYear,
                         selectedMonth = selectedMonth,
+                        weekOffset = weekOffset,
+                        dayOffset = dayOffset,
                         onPreviousMonth = {
                             if (selectedMonth == 1) {
                                 selectedMonth = 12
@@ -215,7 +242,11 @@ fun TransactionScreen(navController: NavController, viewModel: TransactionViewMo
                             }
                         },
                         onPreviousYear = { selectedYear -= 1 },
-                        onNextYear = { selectedYear += 1 }
+                        onNextYear = { selectedYear += 1 },
+                        onPreviousWeek = { weekOffset -= 1 },
+                        onNextWeek = { if (weekOffset < 0) weekOffset += 1 },
+                        onPreviousDay = { dayOffset -= 1 },
+                        onNextDay = { if (dayOffset < 0) dayOffset += 1 }
                     )
 
                     Spacer(modifier = Modifier.height(16.dp))
@@ -252,17 +283,12 @@ fun TransactionScreen(navController: NavController, viewModel: TransactionViewMo
                                     ) {
                                         Column(modifier = Modifier.padding(16.dp)) {
                                             filtered.forEachIndexed { index, transaction ->
-                                                SwipeableTransactionItem(
-                                                    transactionId = transaction.id,
-                                                    title = transaction.title,
-                                                    date = transaction.date,
-                                                    note = transaction.note,
-                                                    amount = transaction.amount,
-                                                    type = transaction.type,
-                                                    category = transaction.category,
+                                                TransactionEntry(
+                                                    transaction = transaction,
+                                                    accounts = accounts,
+                                                    debts = allDebts,
                                                     onDelete = { viewModel.deleteTransaction(transaction) },
-                                                    onEdit = { navController.navigate("edit_transaction/${transaction.id}") },
-                                                    accountName = accounts.find { it.id == transaction.accountId }?.name
+                                                    navController = navController
                                                 )
                                                 if (index < filtered.size - 1) {
                                                     HorizontalDivider(
@@ -292,7 +318,6 @@ fun TransactionScreen(navController: NavController, viewModel: TransactionViewMo
                                         yesterday -> "دیروز"
                                         else -> ""
                                     }
-
                                     item(key = "header_$date") {
                                         DateSectionHeader(date, dayLabel, items)
                                     }
@@ -307,17 +332,12 @@ fun TransactionScreen(navController: NavController, viewModel: TransactionViewMo
                                         ) {
                                             Column(modifier = Modifier.padding(16.dp)) {
                                                 items.forEachIndexed { index, transaction ->
-                                                    SwipeableTransactionItem(
-                                                        transactionId = transaction.id,
-                                                        title = transaction.title,
-                                                        date = transaction.date,
-                                                        note = transaction.note,
-                                                        amount = transaction.amount,
-                                                        type = transaction.type,
-                                                        category = transaction.category,
+                                                    TransactionEntry(
+                                                        transaction = transaction,
+                                                        accounts = accounts,
+                                                        debts = allDebts,
                                                         onDelete = { viewModel.deleteTransaction(transaction) },
-                                                        onEdit = { navController.navigate("edit_transaction/${transaction.id}") },
-                                                        accountName = accounts.find { it.id == transaction.accountId }?.name
+                                                        navController = navController
                                                     )
                                                     if (index < items.size - 1) {
                                                         HorizontalDivider(
@@ -331,6 +351,7 @@ fun TransactionScreen(navController: NavController, viewModel: TransactionViewMo
                                     }
                                 }
                             }
+
                             item {
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
@@ -347,6 +368,7 @@ fun TransactionScreen(navController: NavController, viewModel: TransactionViewMo
                     }
                 }
             }
+
             Box(modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 16.dp, vertical = 16.dp)) {
                 androidx.compose.animation.AnimatedVisibility(
                     visible = !listState.canScrollForward,
@@ -356,6 +378,55 @@ fun TransactionScreen(navController: NavController, viewModel: TransactionViewMo
                     BottomNavBar(navController, currentRoute = "transactions", isScrolling = listState.isScrollInProgress)
                 }
             }
+        }
+    }
+}
+
+// تراکنش مرتبط با بدهی/وام (debtId != null) سوایپ نمی‌شود؛
+// با کلیک به صفحه‌ی جزئیات همان بدهی یا وام می‌رود — مدیریت فقط از بخش بدهی‌ها.
+@Composable
+private fun TransactionEntry(
+    transaction: Transaction,
+    accounts: List<Account>,
+    debts: List<Debt>,
+    onDelete: () -> Unit,
+    navController: NavController
+) {
+    val accountName = accounts.find { it.id == transaction.accountId }?.name
+
+    if (transaction.debtId == null) {
+        SwipeableTransactionItem(
+            transactionId = transaction.id,
+            title = transaction.title,
+            date = transaction.date,
+            note = transaction.note,
+            amount = transaction.amount,
+            type = transaction.type,
+            category = transaction.category,
+            onDelete = onDelete,
+            onEdit = { navController.navigate("edit_transaction/${transaction.id}") },
+            accountName = accountName
+        )
+    } else {
+        val relatedDebt = debts.find { it.id == transaction.debtId }
+        Box(
+            modifier = Modifier.clickable {
+                when {
+                    relatedDebt?.loanGroupId != null -> navController.navigate("loan_detail/${relatedDebt.loanGroupId}")
+                    relatedDebt != null -> navController.navigate("debt_detail/${relatedDebt.id}")
+                    else -> navController.navigate("debts")
+                }
+            }
+        ) {
+            TransactionItem(
+                title = transaction.title,
+                date = transaction.date,
+                note = transaction.note,
+                amount = transaction.amount,
+                type = transaction.type,
+                category = transaction.category,
+                accountName = accountName
+            )
         }
     }
 }
@@ -443,7 +514,6 @@ fun SortDotButton(
         targetValue = if (active) Color.White else color,
         label = "sortDotIcon"
     )
-
     Box(
         modifier = Modifier
             .size(30.dp)
@@ -458,20 +528,27 @@ fun SortDotButton(
 
 @Composable
 fun FilterChips(
-    selectedType: TransactionType?,
-    onTypeSelected: (TransactionType?) -> Unit,
+    selectedType: TxnFilter?,
+    onTypeSelected: (TxnFilter?) -> Unit,
     periodType: PeriodType,
     onPeriodSelected: (PeriodType) -> Unit,
     selectedYear: Int,
     selectedMonth: Int,
+    weekOffset: Int,
+    dayOffset: Int,
     onPreviousMonth: () -> Unit,
     onNextMonth: () -> Unit,
     onPreviousYear: () -> Unit,
-    onNextYear: () -> Unit
+    onNextYear: () -> Unit,
+    onPreviousWeek: () -> Unit,
+    onNextWeek: () -> Unit,
+    onPreviousDay: () -> Unit,
+    onNextDay: () -> Unit
 ) {
     val accentColor = when (selectedType) {
-        TransactionType.INCOME -> IncomeGreen
-        TransactionType.EXPENSE -> ExpensePurple
+        TxnFilter.INCOME -> IncomeGreen
+        TxnFilter.EXPENSE -> ExpensePurple
+        TxnFilter.DEBT -> WarningAmber
         null -> PrimaryGreen
     }
 
@@ -486,47 +563,73 @@ fun FilterChips(
             onPeriodSelected = onPeriodSelected
         )
 
-        if (periodType == PeriodType.MONTH) {
-            Spacer(modifier = Modifier.height(10.dp))
-            MonthNavigator(
-                year = selectedYear,
-                month = selectedMonth,
-                onPrevious = onPreviousMonth,
-                onNext = onNextMonth
-            )
-        } else if (periodType == PeriodType.YEAR) {
-            Spacer(modifier = Modifier.height(10.dp))
-            YearNavigator(
-                year = selectedYear,
-                onPrevious = onPreviousYear,
-                onNext = onNextYear
-            )
+        when (periodType) {
+            PeriodType.DAY -> {
+                Spacer(modifier = Modifier.height(10.dp))
+                DayNavigator(
+                    dayOffset = dayOffset,
+                    onPrevious = onPreviousDay,
+                    onNext = onNextDay
+                )
+            }
+            PeriodType.WEEK -> {
+                Spacer(modifier = Modifier.height(10.dp))
+                WeekNavigator(
+                    weekOffset = weekOffset,
+                    onPrevious = onPreviousWeek,
+                    onNext = onNextWeek
+                )
+            }
+            PeriodType.MONTH -> {
+                Spacer(modifier = Modifier.height(10.dp))
+                MonthNavigator(
+                    year = selectedYear,
+                    month = selectedMonth,
+                    onPrevious = onPreviousMonth,
+                    onNext = onNextMonth
+                )
+            }
+            PeriodType.YEAR -> {
+                Spacer(modifier = Modifier.height(10.dp))
+                YearNavigator(
+                    year = selectedYear,
+                    onPrevious = onPreviousYear,
+                    onNext = onNextYear
+                )
+            }
         }
     }
 }
 
 @Composable
 fun TypeFilterRow(
-    selectedType: TransactionType?,
-    onTypeSelected: (TransactionType?) -> Unit
+    selectedType: TxnFilter?,
+    onTypeSelected: (TxnFilter?) -> Unit
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceEvenly
     ) {
         TypeFilterItem(
-            label = "درآمدها",
-            icon = Icons.AutoMirrored.Outlined.TrendingUp,
-            color = IncomeGreen,
-            selected = selectedType == TransactionType.INCOME,
-            onClick = { onTypeSelected(TransactionType.INCOME) }
+            label = "وام",
+            icon = Icons.Outlined.CreditCard,
+            color = WarningAmber,
+            selected = selectedType == TxnFilter.DEBT,
+            onClick = { onTypeSelected(TxnFilter.DEBT) }
         )
         TypeFilterItem(
             label = "هزینه‌ها",
             icon = Icons.AutoMirrored.Outlined.TrendingDown,
             color = ExpensePurple,
-            selected = selectedType == TransactionType.EXPENSE,
-            onClick = { onTypeSelected(TransactionType.EXPENSE) }
+            selected = selectedType == TxnFilter.EXPENSE,
+            onClick = { onTypeSelected(TxnFilter.EXPENSE) }
+        )
+        TypeFilterItem(
+            label = "درآمدها",
+            icon = Icons.AutoMirrored.Outlined.TrendingUp,
+            color = IncomeGreen,
+            selected = selectedType == TxnFilter.INCOME,
+            onClick = { onTypeSelected(TxnFilter.INCOME) }
         )
         TypeFilterItem(
             label = "همه",
@@ -548,6 +651,13 @@ fun PeriodFilterRow(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceEvenly
     ) {
+        TypeFilterItem(
+            label = "روز",
+            icon = Icons.Outlined.Today,
+            color = accentColor,
+            selected = periodType == PeriodType.DAY,
+            onClick = { onPeriodSelected(PeriodType.DAY) }
+        )
         TypeFilterItem(
             label = "هفته",
             icon = Icons.Outlined.DateRange,
@@ -573,37 +683,69 @@ fun PeriodFilterRow(
 }
 
 @Composable
+fun DayNavigator(
+    dayOffset: Int,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit
+) {
+    val date = PersianDateUtils.addDaysToToday(dayOffset)
+    val label = when (dayOffset) {
+        0 -> "امروز"
+        -1 -> "دیروز"
+        else -> PersianDateUtils.toPersianDigits(date)
+    }
+    PeriodNavigatorBar(
+        label = label,
+        nextContentDescription = "روز بعد",
+        previousContentDescription = "روز قبل",
+        nextEnabled = dayOffset < 0,
+        onPrevious = onPrevious,
+        onNext = onNext
+    )
+}
+
+@Composable
+fun WeekNavigator(
+    weekOffset: Int,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit
+) {
+    val weekDates = PersianDateUtils.getWeekDates(weekOffset)
+    val first = weekDates.first().split("/")
+    val last = weekDates.last().split("/")
+    val label = if (weekOffset == 0) {
+        "هفته‌ی جاری"
+    } else {
+        val rangeText = "${PersianDateUtils.toPersianDigits(first[2])} ${PersianDateUtils.persianMonthNames.getOrElse(first[1].toIntOrNull()?.minus(1) ?: 0) { "" }}" +
+                " تا " +
+                "${PersianDateUtils.toPersianDigits(last[2])} ${PersianDateUtils.persianMonthNames.getOrElse(last[1].toIntOrNull()?.minus(1) ?: 0) { "" }}"
+        if (first[0] != last[0]) rangeText + " " + PersianDateUtils.toPersianDigits(last[0]) else rangeText
+    }
+    PeriodNavigatorBar(
+        label = label,
+        nextContentDescription = "هفته‌ی بعد",
+        previousContentDescription = "هفته‌ی قبل",
+        nextEnabled = weekOffset < 0,
+        onPrevious = onPrevious,
+        onNext = onNext
+    )
+}
+
+@Composable
 fun MonthNavigator(
     year: Int,
     month: Int,
     onPrevious: () -> Unit,
     onNext: () -> Unit
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(CardWhite)
-            .padding(vertical = 4.dp, horizontal = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        // Declared first -> right side in RTL: go to the next month
-        IconButton(onClick = onNext) {
-            Icon(Icons.Outlined.ChevronRight, "ماه بعد", tint = TextSecondary)
-        }
-        Text(
-            "${PersianDateUtils.persianMonthNames.getOrElse(month - 1) { "" }} ${PersianDateUtils.toPersianDigits(year.toString())}",
-            style = MaterialTheme.typography.bodyMedium,
-            color = TextPrimary,
-            fontWeight = FontWeight.Bold,
-            fontFamily = Vazirmatn
-        )
-        // Declared last -> left side in RTL: go to the previous month
-        IconButton(onClick = onPrevious) {
-            Icon(Icons.Outlined.ChevronLeft, "ماه قبل", tint = TextSecondary)
-        }
-    }
+    PeriodNavigatorBar(
+        label = "${PersianDateUtils.persianMonthNames.getOrElse(month - 1) { "" }} ${PersianDateUtils.toPersianDigits(year.toString())}",
+        nextContentDescription = "ماه بعد",
+        previousContentDescription = "ماه قبل",
+        nextEnabled = true,
+        onPrevious = onPrevious,
+        onNext = onNext
+    )
 }
 
 @Composable
@@ -612,6 +754,26 @@ fun YearNavigator(
     onPrevious: () -> Unit,
     onNext: () -> Unit
 ) {
+    PeriodNavigatorBar(
+        label = PersianDateUtils.toPersianDigits(year.toString()),
+        nextContentDescription = "سال بعد",
+        previousContentDescription = "سال قبل",
+        nextEnabled = true,
+        onPrevious = onPrevious,
+        onNext = onNext
+    )
+}
+
+// اسکلت مشترک همه‌ی ناوبری‌ها: دکمه‌ی «بعد» سمت راست (ابتدای RTL)، «قبل» سمت چپ
+@Composable
+private fun PeriodNavigatorBar(
+    label: String,
+    nextContentDescription: String,
+    previousContentDescription: String,
+    nextEnabled: Boolean,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -621,20 +783,24 @@ fun YearNavigator(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        // Declared first -> right side in RTL: go to the next year
-        IconButton(onClick = onNext) {
-            Icon(Icons.Outlined.ChevronRight, "سال بعد", tint = TextSecondary)
+        // Declared first -> right side in RTL: go to the next period
+        IconButton(onClick = onNext, enabled = nextEnabled) {
+            Icon(
+                Icons.Outlined.ChevronRight,
+                nextContentDescription,
+                tint = if (nextEnabled) TextSecondary else TextTertiary.copy(alpha = 0.35f)
+            )
         }
         Text(
-            PersianDateUtils.toPersianDigits(year.toString()),
+            label,
             style = MaterialTheme.typography.bodyMedium,
             color = TextPrimary,
             fontWeight = FontWeight.Bold,
             fontFamily = Vazirmatn
         )
-        // Declared last -> left side in RTL: go to the previous year
+        // Declared last -> left side in RTL: go to the previous period
         IconButton(onClick = onPrevious) {
-            Icon(Icons.Outlined.ChevronLeft, "سال قبل", tint = TextSecondary)
+            Icon(Icons.Outlined.ChevronLeft, previousContentDescription, tint = TextSecondary)
         }
     }
 }
@@ -655,7 +821,6 @@ fun TypeFilterItem(
         targetValue = if (selected) Color.White else color,
         label = "typeFilterIcon"
     )
-
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
@@ -686,7 +851,7 @@ fun TypeFilterItem(
 @Composable
 fun DateSectionHeader(date: String, dayLabel: String, transactions: List<Transaction>) {
     val dayTotal = transactions.filter { it.type == TransactionType.INCOME }.sumOf { it.amount } -
-                   transactions.filter { it.type == TransactionType.EXPENSE }.sumOf { it.amount }
+            transactions.filter { it.type == TransactionType.EXPENSE }.sumOf { it.amount }
 
     Row(
         modifier = Modifier
@@ -712,7 +877,6 @@ fun DateSectionHeader(date: String, dayLabel: String, transactions: List<Transac
                 )
             }
         }
-
         // LEFT side: Date (persian digits)
         Text(
             PersianDateUtils.toPersianDigits(date),
@@ -761,9 +925,7 @@ fun TransactionListItem(
                     modifier = Modifier.size(24.dp)
                 )
             }
-
             Spacer(modifier = Modifier.width(12.dp))
-
             Column {
                 Text(
                     transaction.title,
@@ -780,7 +942,6 @@ fun TransactionListItem(
                 )
             }
         }
-
         // Left side: Amount (sign before, minus after for expense)
         Text(
             "${sign}${formatPersianAmount(transaction.amount)}${minusSuffix}",
