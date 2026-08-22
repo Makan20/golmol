@@ -1,5 +1,6 @@
 package com.example.nargesapp.ui.screens
 
+import android.view.WindowManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
@@ -28,6 +29,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.LayoutDirection
@@ -45,6 +48,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogWindowProvider
 import com.example.nargesapp.ui.theme.CardWhite
 import com.example.nargesapp.ui.theme.TextPrimary
 import com.example.nargesapp.ui.theme.TextSecondary
@@ -56,7 +60,7 @@ import kotlinx.coroutines.launch
 private fun isPersianLeapYear(year: Int): Boolean {
     val cycle = ((year % 33) + 33) % 33
     return cycle == 1 || cycle == 5 || cycle == 9 || cycle == 13 ||
-        cycle == 17 || cycle == 22 || cycle == 26 || cycle == 30
+            cycle == 17 || cycle == 22 || cycle == 26 || cycle == 30
 }
 
 private fun daysInPersianMonth(year: Int, month: Int): Int {
@@ -72,7 +76,9 @@ fun PersianDatePickerDialog(
     initialDate: String,
     accentColor: Color,
     onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit
+    onConfirm: (String) -> Unit,
+    // وقتی از داخل یک دیالوگ دیگر باز می‌شود false بگذارید تا پرده‌ی تیره دوبل نشود (بدون پرش)
+    dimBehind: Boolean = true
 ) {
     val parts = initialDate.split("/")
     val todayParts = PersianDateUtils.getCurrentPersianDate().split("/")
@@ -92,6 +98,14 @@ fun PersianDatePickerDialog(
     }
 
     Dialog(onDismissRequest = onDismiss) {
+        if (!dimBehind) {
+            val view = LocalView.current
+            SideEffect {
+                (view.parent as? DialogWindowProvider)?.window
+                    ?.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            }
+        }
+
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
             Card(
                 shape = RoundedCornerShape(24.dp),
@@ -173,6 +187,7 @@ fun PersianDatePickerDialog(
                                 color = TextSecondary
                             )
                         }
+
                         Button(
                             onClick = {
                                 val dateStr = String.format(
