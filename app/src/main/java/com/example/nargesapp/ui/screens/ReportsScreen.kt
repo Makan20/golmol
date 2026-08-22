@@ -126,6 +126,7 @@ fun ReportsScreen(navController: NavController, viewModel: TransactionViewModel)
         }
         PeriodType.YEAR -> filterByPeriod(transactions, PeriodType.YEAR, selectedYear - 1, selectedMonth)
         PeriodType.WEEK -> emptyList()
+PeriodType.DAY -> emptyList()
     }
     val previousIncome = previousPeriodFiltered.filter { it.type == TransactionType.INCOME }.sumOf { it.amount }
     val previousExpense = previousPeriodFiltered.filter { it.type == TransactionType.EXPENSE }.sumOf { it.amount }
@@ -458,6 +459,7 @@ fun PeriodSummaryCard(income: Long, expense: Long, periodType: PeriodType) {
         PeriodType.WEEK -> "این هفته"
         PeriodType.MONTH -> "این ماه"
         PeriodType.YEAR -> "امسال"
+PeriodType.DAY -> "امروز"
     }
     val netColor = if (net >= 0) IncomeGreen else ExpensePurple
 
