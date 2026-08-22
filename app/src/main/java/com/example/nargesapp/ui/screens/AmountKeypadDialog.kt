@@ -1,5 +1,6 @@
 package com.example.nargesapp.ui.screens
 
+import android.view.WindowManager
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,6 +18,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -24,17 +26,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogWindowProvider
 import com.example.nargesapp.ui.theme.CardWhite
 import com.example.nargesapp.ui.theme.TextPrimary
 import com.example.nargesapp.ui.theme.TextSecondary
 import com.example.nargesapp.ui.theme.TextTertiary
 import com.example.nargesapp.ui.theme.Vazirmatn
+import java.text.NumberFormat
+import java.util.Locale
 
 @Composable
 fun AmountKeypadDialog(
@@ -44,7 +50,9 @@ fun AmountKeypadDialog(
     onConfirm: (String) -> Unit,
     title: String = "مبلغ تراکنش",
     unitLabel: String? = "تومان",
-    maxDigits: Int? = null
+    maxDigits: Int? = null,
+    // وقتی از داخل یک دیالوگ دیگر باز می‌شود false بگذارید تا پرده‌ی تیره دوبل نشود (بدون پرش)
+    dimBehind: Boolean = true
 ) {
     var amount by remember(initialAmount) {
         mutableStateOf(initialAmount)
@@ -74,7 +82,23 @@ fun AmountKeypadDialog(
         }
     }
 
+    // نمایش همیشه سه‌رقم‌سه‌رقم — حتی برای مقدار اولیه‌ای که خام پاس داده شده
+    val displayAmount = persianToEnglish(amount)
+        .filter { it in '0'..'9' }
+        .toLongOrNull()
+        ?.let { NumberFormat.getInstance(Locale.US).format(it) }
+        ?.let { com.example.nargesapp.ui.utils.PersianDateUtils.toPersianDigits(it) }
+        ?: "۰"
+
     Dialog(onDismissRequest = onDismiss) {
+        if (!dimBehind) {
+            val view = LocalView.current
+            SideEffect {
+                (view.parent as? DialogWindowProvider)?.window
+                    ?.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            }
+        }
+
         CompositionLocalProvider(
             LocalLayoutDirection provides LayoutDirection.Rtl
         ) {
@@ -103,7 +127,7 @@ fun AmountKeypadDialog(
                     Spacer(modifier = Modifier.height(18.dp))
 
                     Text(
-                        text = if (amount.isBlank()) "۰" else com.example.nargesapp.ui.utils.PersianDateUtils.toPersianDigits(amount),
+                        text = if (amount.isBlank()) "۰" else displayAmount,
                         modifier = Modifier.fillMaxWidth(),
                         textAlign = TextAlign.Center,
                         color = if (amount.isBlank()) TextTertiary else TextPrimary,
