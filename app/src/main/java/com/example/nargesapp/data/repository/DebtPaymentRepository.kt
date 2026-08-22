@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
 object DebtPaymentRepository {
+
     private lateinit var dao: DebtPaymentDao
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -28,6 +29,14 @@ object DebtPaymentRepository {
 
     fun addPayment(payment: DebtPayment) {
         scope.launch { dao.insert(payment) }
+    }
+
+    fun updatePayment(payment: DebtPayment) {
+        scope.launch { dao.update(payment) }
+    }
+
+    fun deletePayment(payment: DebtPayment) {
+        scope.launch { dao.delete(payment) }
     }
 
     fun deletePaymentsForDebt(debtId: Int) {
