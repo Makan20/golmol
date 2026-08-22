@@ -1,8 +1,11 @@
 package com.example.nargesapp.ui.screens
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -14,11 +17,13 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -58,8 +63,13 @@ private fun parseSettleAmount(value: String): Long {
     return englishDigits.filter { it.isDigit() }.toLongOrNull() ?: 0L
 }
 
+// نمایش مبلغ با جداکننده‌ی سه‌رقمی و ارقام فارسی (فقط برای نمایش؛ مقدار خام دست نمی‌خورد)
+private fun groupedPersianDigits(amount: Long): String =
+    PersianDateUtils.toPersianDigits(NumberFormat.getInstance(Locale.US).format(amount))
+
 private enum class DebtDeleteStage { IDLE, LOADING, SUCCESS }
 private enum class DebtSettleStage { IDLE, LOADING, SUCCESS }
+private enum class DebtEditStage { IDLE, LOADING, SUCCESS }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -113,6 +123,8 @@ private fun DebtDetailContent(navController: NavController, debt: Debt) {
     val allDebts by DebtRepository.debts.collectAsStateWithLifecycle()
     val isInstallment = debt.loanGroupId != null
     var showSettleDialog by remember { mutableStateOf(false) }
+    var showEditDialog by remember { mutableStateOf(false) }
+    var selectedPayment by remember { mutableStateOf<DebtPayment?>(null) }
     val scope = rememberCoroutineScope()
     val allPayments by DebtPaymentRepository.payments.collectAsStateWithLifecycle()
     val accounts by AccountRepository.accounts.collectAsStateWithLifecycle()
@@ -132,6 +144,11 @@ private fun DebtDetailContent(navController: NavController, debt: Debt) {
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.AutoMirrored.Outlined.ArrowBack, "بازگشت", tint = TextPrimary)
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { showEditDialog = true }) {
+                        Icon(Icons.Outlined.Edit, "ویرایش", tint = TextPrimary, modifier = Modifier.size(20.dp))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = BackgroundLight)
@@ -243,7 +260,13 @@ private fun DebtDetailContent(navController: NavController, debt: Debt) {
                             payments.sortedBy { it.id }.forEachIndexed { index, payment ->
                                 val ordinal = paymentOrdinals.getOrNull(index) ?: "${index + 1}ام"
                                 val accountName = accounts.find { it.id == payment.accountId }?.name
-                                Column {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .clickable { selectedPayment = payment }
+                                        .padding(vertical = 4.dp, horizontal = 4.dp)
+                                ) {
                                     Text(
                                         "پرداخت $ordinal: ${detailAmount(payment.amount)} در تاریخ ${PersianDateUtils.toPersianDigits(payment.date)}",
                                         color = TextSecondary,
@@ -263,6 +286,27 @@ private fun DebtDetailContent(navController: NavController, debt: Debt) {
                                         )
                                     }
                                 }
+                            }
+                            // راهنما + نقطه‌ی رنگی جلوی متن — انتهای بخش تاریخچه
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Start
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(7.dp)
+                                        .clip(CircleShape)
+                                        .background(accentColor)
+                                )
+                                Spacer(Modifier.width(5.dp))
+                                Text(
+                                    "برای اصلاح یا حذف هر پرداخت، روی آن بزنید",
+                                    color = TextTertiary,
+                                    fontFamily = Vazirmatn,
+                                    fontSize = 11.sp,
+                                    textAlign = TextAlign.Right
+                                )
                             }
                         }
                     }
@@ -310,6 +354,23 @@ private fun DebtDetailContent(navController: NavController, debt: Debt) {
                 Spacer(Modifier.height(24.dp))
             }
         }
+    }
+
+    if (showEditDialog) {
+        EditDebtDialog(
+            debt = debt,
+            accentColor = accentColor,
+            onDismiss = { showEditDialog = false }
+        )
+    }
+
+    selectedPayment?.let { payment ->
+        PaymentActionsDialog(
+            payment = payment,
+            debt = debt,
+            accentColor = accentColor,
+            onDismiss = { selectedPayment = null }
+        )
     }
 
     if (showDeleteDialog) {
@@ -440,6 +501,675 @@ private fun DebtDetailContent(navController: NavController, debt: Debt) {
     }
 }
 
+// دیالوگ اکشن‌های هر پرداخت: اصلاح مبلغ یا حذف — هر دو با به‌روزرسانی اتمیک
+// payment + paidAmount بدهی + تراکنش لینک‌شده
+@Composable
+private fun PaymentActionsDialog(
+    payment: DebtPayment,
+    debt: Debt,
+    accentColor: Color,
+    onDismiss: () -> Unit
+) {
+    var showEditKeypad by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+
+    if (!showEditKeypad && !showDeleteConfirm) {
+        CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Ltr) {
+            AlertDialog(
+                onDismissRequest = onDismiss,
+                containerColor = CardWhite,
+                title = {
+                    Text(
+                        "پرداخت ${detailAmount(payment.amount)}",
+                        fontFamily = Vazirmatn,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        textAlign = TextAlign.Right,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                },
+                text = {
+                    Text(
+                        "تاریخ: ${PersianDateUtils.toPersianDigits(payment.date)}",
+                        color = TextSecondary,
+                        fontFamily = Vazirmatn,
+                        fontSize = 12.sp,
+                        textAlign = TextAlign.Right,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { showEditKeypad = true }) {
+                        Text("اصلاح مبلغ", color = accentColor, fontFamily = Vazirmatn, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
+                },
+                dismissButton = {
+                    Row {
+                        TextButton(onClick = { showDeleteConfirm = true }) {
+                            Text("حذف پرداخت", color = accentColor, fontFamily = Vazirmatn, fontSize = 13.sp)
+                        }
+                        TextButton(onClick = onDismiss) {
+                            Text("انصراف", color = TextSecondary, fontFamily = Vazirmatn, fontSize = 13.sp)
+                        }
+                    }
+                }
+            )
+        }
+    }
+
+    if (showEditKeypad) {
+        EditPaymentAmountDialog(
+            payment = payment,
+            debt = debt,
+            accentColor = accentColor,
+            onDismiss = { showEditKeypad = false },
+            onDone = onDismiss
+        )
+    }
+
+    if (showDeleteConfirm) {
+        DeletePaymentDialog(
+            payment = payment,
+            debt = debt,
+            accentColor = accentColor,
+            onDismiss = { showDeleteConfirm = false },
+            onDone = onDismiss
+        )
+    }
+}
+
+@Composable
+private fun EditPaymentAmountDialog(
+    payment: DebtPayment,
+    debt: Debt,
+    accentColor: Color,
+    onDismiss: () -> Unit,
+    onDone: () -> Unit
+) {
+    var amountText by remember { mutableStateOf(PersianDateUtils.toPersianDigits(payment.amount.toString())) }
+    var showKeypad by remember { mutableStateOf(false) }
+    var stage by remember { mutableStateOf(DebtEditStage.IDLE) }
+    val scope = rememberCoroutineScope()
+
+    val enteredAmount = parseSettleAmount(amountText)
+    // حداکثر مجاز: باقی‌مانده + مبلغ همین پرداخت (یعنی paidAmount جدید از کل بدهی بیشتر نشود)
+    val maxAllowed = debt.remainingAmount + payment.amount
+    val exceedsMax = enteredAmount > maxAllowed
+    val isValid = enteredAmount > 0L && !exceedsMax && enteredAmount != payment.amount
+
+    CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Ltr) {
+        AlertDialog(
+            onDismissRequest = { if (stage == DebtEditStage.IDLE) onDismiss() },
+            containerColor = CardWhite,
+            // وقتی کیپد باز است، محتوای والد نامرئی می‌شود ولی پنجره و پرده زنده می‌مانند
+            modifier = Modifier.alpha(if (showKeypad) 0f else 1f),
+            title = {
+                Text(
+                    "اصلاح مبلغ پرداخت",
+                    fontFamily = Vazirmatn,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    textAlign = TextAlign.Right,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            text = {
+                Column {
+                    Text(
+                        "مبلغ فعلی: ${detailAmount(payment.amount)}",
+                        color = TextSecondary,
+                        fontFamily = Vazirmatn,
+                        fontSize = 12.sp,
+                        textAlign = TextAlign.Right,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    val hasAmount = amountText.isNotBlank()
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(Color(0xFFFDFDFD))
+                            .border(
+                                width = if (hasAmount) 2.dp else 1.dp,
+                                color = if (hasAmount) accentColor else DividerColor,
+                                shape = RoundedCornerShape(14.dp)
+                            )
+                            .clickable { showKeypad = true }
+                    ) {
+                        CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Rtl) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    if (hasAmount) groupedPersianDigits(enteredAmount) else "۰",
+                                    color = if (hasAmount) TextPrimary else TextTertiary,
+                                    fontFamily = Vazirmatn,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text("تومان", color = TextSecondary, fontFamily = Vazirmatn, fontSize = 13.sp)
+                            }
+                        }
+                    }
+                    if (exceedsMax) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "حداکثر مبلغ مجاز: ${detailAmount(maxAllowed)}",
+                            color = TextTertiary,
+                            fontFamily = Vazirmatn,
+                            fontSize = 11.sp,
+                            textAlign = TextAlign.Right,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (stage == DebtEditStage.IDLE) {
+                            scope.launch {
+                                stage = DebtEditStage.LOADING
+                                delay(700)
+
+                                // ۱) به‌روزرسانی رکورد پرداخت
+                                DebtPaymentRepository.updatePayment(payment.copy(amount = enteredAmount))
+
+                                // ۲) به‌روزرسانی بدهی (paidAmount + وضعیت تسویه)
+                                val newPaidAmount = debt.paidAmount - payment.amount + enteredAmount
+                                DebtRepository.updateDebt(
+                                    debt.copy(
+                                        paidAmount = newPaidAmount,
+                                        isSettled = newPaidAmount >= debt.amount
+                                    )
+                                )
+
+                                // ۳) اصلاح تراکنش لینک‌شده (اگر پیدا شود)
+                                val linkedTxn = TransactionRepository.transactions.value.find {
+                                    it.debtId == debt.id && it.amount == payment.amount && it.date == payment.date
+                                }
+                                linkedTxn?.let {
+                                    TransactionRepository.updateTransaction(it.copy(amount = enteredAmount))
+                                }
+
+                                stage = DebtEditStage.SUCCESS
+                                delay(900)
+                                stage = DebtEditStage.IDLE
+                                onDone()
+                            }
+                        }
+                    },
+                    enabled = isValid && stage == DebtEditStage.IDLE
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        when (stage) {
+                            DebtEditStage.LOADING -> {
+                                CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = accentColor)
+                                Spacer(Modifier.width(6.dp))
+                                Text("...در حال اصلاح", color = accentColor, fontFamily = Vazirmatn, fontSize = 13.sp)
+                            }
+                            DebtEditStage.SUCCESS -> {
+                                Icon(Icons.Outlined.CheckCircle, null, tint = IncomeGreen, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("اصلاح شد", color = IncomeGreen, fontFamily = Vazirmatn, fontSize = 13.sp)
+                            }
+                            DebtEditStage.IDLE -> {
+                                Text(
+                                    "ذخیره",
+                                    color = if (isValid) accentColor else TextTertiary,
+                                    fontFamily = Vazirmatn,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = onDismiss, enabled = stage == DebtEditStage.IDLE) {
+                    Text("انصراف", color = TextSecondary, fontFamily = Vazirmatn, fontSize = 13.sp)
+                }
+            }
+        )
+    }
+
+    // کیپد بدون پرده‌ی دوم روی همین دیالوگ باز می‌شود — بدون پرش
+    if (showKeypad) {
+        AmountKeypadDialog(
+            initialAmount = amountText,
+            accentColor = accentColor,
+            onDismiss = { showKeypad = false },
+            onConfirm = { newAmount ->
+                amountText = newAmount
+                showKeypad = false
+            },
+            dimBehind = false
+        )
+    }
+}
+
+@Composable
+private fun DeletePaymentDialog(
+    payment: DebtPayment,
+    debt: Debt,
+    accentColor: Color,
+    onDismiss: () -> Unit,
+    onDone: () -> Unit
+) {
+    var stage by remember { mutableStateOf(DebtEditStage.IDLE) }
+    val scope = rememberCoroutineScope()
+
+    CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Ltr) {
+        AlertDialog(
+            onDismissRequest = { if (stage == DebtEditStage.IDLE) onDismiss() },
+            containerColor = CardWhite,
+            title = {
+                Text(
+                    "حذف پرداخت",
+                    fontFamily = Vazirmatn,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    textAlign = TextAlign.Right,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            text = {
+                Text(
+                    "پرداخت ${detailAmount(payment.amount)} حذف می‌شود، از مبلغ پرداخت‌شده کم می‌شود و تراکنش مرتبطش هم پاک می‌شود. مطمئنی؟",
+                    fontFamily = Vazirmatn,
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Right,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (stage == DebtEditStage.IDLE) {
+                            scope.launch {
+                                stage = DebtEditStage.LOADING
+                                delay(700)
+
+                                // ۱) حذف رکورد پرداخت
+                                DebtPaymentRepository.deletePayment(payment)
+
+                                // ۲) کم کردن از paidAmount بدهی
+                                val newPaidAmount = (debt.paidAmount - payment.amount).coerceAtLeast(0L)
+                                DebtRepository.updateDebt(
+                                    debt.copy(
+                                        paidAmount = newPaidAmount,
+                                        isSettled = newPaidAmount >= debt.amount
+                                    )
+                                )
+
+                                // ۳) حذف تراکنش لینک‌شده (اگر پیدا شود)
+                                val linkedTxn = TransactionRepository.transactions.value.find {
+                                    it.debtId == debt.id && it.amount == payment.amount && it.date == payment.date
+                                }
+                                linkedTxn?.let { TransactionRepository.deleteTransaction(it) }
+
+                                stage = DebtEditStage.SUCCESS
+                                delay(900)
+                                stage = DebtEditStage.IDLE
+                                onDone()
+                            }
+                        }
+                    },
+                    enabled = stage == DebtEditStage.IDLE
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        when (stage) {
+                            DebtEditStage.LOADING -> {
+                                CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = accentColor)
+                                Spacer(Modifier.width(6.dp))
+                                Text("...در حال حذف", color = accentColor, fontFamily = Vazirmatn, fontSize = 13.sp)
+                            }
+                            DebtEditStage.SUCCESS -> {
+                                Icon(Icons.Outlined.CheckCircle, null, tint = IncomeGreen, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("حذف شد", color = IncomeGreen, fontFamily = Vazirmatn, fontSize = 13.sp)
+                            }
+                            DebtEditStage.IDLE -> {
+                                Text("حذف کن", color = accentColor, fontFamily = Vazirmatn, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            }
+                        }
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = onDismiss, enabled = stage == DebtEditStage.IDLE) {
+                    Text("انصراف", color = TextSecondary, fontFamily = Vazirmatn, fontSize = 13.sp)
+                }
+            }
+        )
+    }
+}
+
+// فیلد متنی دیالوگ ویرایش: خاکستری تا وقتی مقدارش عوض نشده؛
+// بعد از اولین تغییر، سبز/بنفش پررنگ (چه فوکوس داشته باشه چه نه)
+@Composable
+private fun EditField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    originalValue: String,
+    accentColor: Color,
+    singleLine: Boolean = true
+) {
+    val changed = value != originalValue
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    val isActive = changed || isFocused
+    val borderColor by animateColorAsState(
+        targetValue = if (isActive) accentColor else DividerColor,
+        label = "editFieldBorder"
+    )
+
+    Column {
+        Text(
+            label,
+            fontSize = 12.sp,
+            fontFamily = Vazirmatn,
+            color = if (isActive) accentColor else TextTertiary,
+            modifier = Modifier.fillMaxWidth(),
+            textAlign = TextAlign.Right
+        )
+        Spacer(Modifier.height(4.dp))
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .border(if (isActive) 2.dp else 1.dp, borderColor, RoundedCornerShape(14.dp))
+        ) {
+            OutlinedTextField(
+                value = value,
+                onValueChange = onValueChange,
+                modifier = Modifier.fillMaxWidth(),
+                interactionSource = interactionSource,
+                singleLine = singleLine,
+                textStyle = LocalTextStyle.current.copy(textAlign = TextAlign.Right, fontFamily = Vazirmatn, fontSize = 15.sp),
+                shape = RoundedCornerShape(14.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = Color.Transparent,
+                    unfocusedBorderColor = Color.Transparent,
+                    cursorColor = accentColor,
+                    focusedContainerColor = Color(0xFFFDFDFD),
+                    unfocusedContainerColor = Color(0xFFFDFDFD)
+                )
+            )
+        }
+    }
+}
+
+// ویرایش مستقل بدهی/طلب/قسط: نام، مبلغ (با شرط حداقل = پرداخت‌شده)، سررسید و توضیحات.
+// نوع (طلب/بدهی) و ساختار وام قابل ویرایش نیستند — برای آن‌ها حذف و ثبت مجدد.
+@Composable
+private fun EditDebtDialog(
+    debt: Debt,
+    accentColor: Color,
+    onDismiss: () -> Unit
+) {
+    var nameText by remember { mutableStateOf(debt.personName) }
+    var amountText by remember { mutableStateOf(PersianDateUtils.toPersianDigits(debt.amount.toString())) }
+    var dueDateText by remember { mutableStateOf(debt.dueDate) }
+    var noteText by remember { mutableStateOf(debt.note) }
+    var showAmountKeypad by remember { mutableStateOf(false) }
+    var showDatePicker by remember { mutableStateOf(false) }
+    var editStage by remember { mutableStateOf(DebtEditStage.IDLE) }
+    val scope = rememberCoroutineScope()
+
+    val enteredAmount = parseSettleAmount(amountText)
+    // قانون: مبلغ جدید نباید از مبلغ پرداخت‌شده کمتر باشد
+    val belowPaid = enteredAmount < debt.paidAmount
+    val isValid = nameText.isNotBlank() && enteredAmount > 0L && !belowPaid
+
+    // وضعیت «تغییر کرده» برای هر فیلد — تا عوض نشده، بوردر خاکستری می‌ماند
+    val nameChanged = nameText.trim() != debt.personName
+    val amountChanged = enteredAmount != debt.amount
+    val dateChanged = dueDateText != debt.dueDate
+    val noteChanged = noteText.trim() != debt.note
+    val hasChanges = nameChanged || amountChanged || dateChanged || noteChanged
+
+    // وقتی کیپد یا تقویم باز است، محتوای والد نامرئی می‌شود ولی پنجره و پرده زنده می‌مانند
+    val childOpen = showAmountKeypad || showDatePicker
+
+    CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Ltr) {
+        AlertDialog(
+            onDismissRequest = { if (editStage == DebtEditStage.IDLE) onDismiss() },
+            containerColor = CardWhite,
+            modifier = Modifier.alpha(if (childOpen) 0f else 1f),
+            title = {
+                // Rtl تا گیومه‌ها («») درست رندر شوند
+                CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Rtl) {
+                    Text(
+                        "ویرایش «${debt.personName}»",
+                        fontFamily = Vazirmatn,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        textAlign = TextAlign.Right,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            text = {
+                CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Rtl) {
+                    Column {
+                        EditField(
+                            value = nameText,
+                            onValueChange = { nameText = it },
+                            label = "نام شخص",
+                            originalValue = debt.personName,
+                            accentColor = accentColor
+                        )
+
+                        Spacer(Modifier.height(10.dp))
+
+                        // مبلغ (با کیپد اختصاصی) — نمایش سه‌رقم‌سه‌رقم + لیبل
+                        Text(
+                            "مبلغ",
+                            fontSize = 12.sp,
+                            fontFamily = Vazirmatn,
+                            color = if (amountChanged) accentColor else TextTertiary,
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = TextAlign.Right
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(Color(0xFFFDFDFD))
+                                .border(
+                                    width = if (amountChanged) 2.dp else 1.dp,
+                                    color = if (amountChanged) accentColor else DividerColor,
+                                    shape = RoundedCornerShape(14.dp)
+                                )
+                                .clickable { showAmountKeypad = true }
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    groupedPersianDigits(enteredAmount),
+                                    color = TextPrimary,
+                                    fontFamily = Vazirmatn,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text("تومان", color = TextSecondary, fontFamily = Vazirmatn, fontSize = 13.sp)
+                            }
+                        }
+                        if (belowPaid) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                "نمی‌تواند کمتر از مبلغ پرداخت‌شده (${detailAmount(debt.paidAmount)}) باشد",
+                                color = TextTertiary,
+                                fontFamily = Vazirmatn,
+                                fontSize = 11.sp,
+                                textAlign = TextAlign.Right,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+
+                        Spacer(Modifier.height(10.dp))
+
+                        // تاریخ سررسید + لیبل (بدون دکمه‌ی حذف — اگر عوض نشود، همان تاریخ اصلی می‌ماند)
+                        Text(
+                            "تاریخ سررسید",
+                            fontSize = 12.sp,
+                            fontFamily = Vazirmatn,
+                            color = if (dateChanged) accentColor else TextTertiary,
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = TextAlign.Right
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(Color(0xFFFDFDFD))
+                                .border(
+                                    width = if (dateChanged) 2.dp else 1.dp,
+                                    color = if (dateChanged) accentColor else DividerColor,
+                                    shape = RoundedCornerShape(14.dp)
+                                )
+                                .clickable { showDatePicker = true }
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Outlined.CalendarMonth, null,
+                                    tint = if (dateChanged) accentColor else TextTertiary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    if (dueDateText.isNotBlank()) PersianDateUtils.toPersianDigits(dueDateText)
+                                    else "بدون سررسید",
+                                    color = if (dueDateText.isBlank()) TextTertiary else TextPrimary,
+                                    fontFamily = Vazirmatn,
+                                    fontSize = 14.sp
+                                )
+                            }
+                        }
+
+                        Spacer(Modifier.height(10.dp))
+
+                        EditField(
+                            value = noteText,
+                            onValueChange = { noteText = it },
+                            label = "توضیحات",
+                            originalValue = debt.note,
+                            accentColor = accentColor,
+                            singleLine = false
+                        )
+
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "اگر مبلغ به اندازه‌ی پرداخت‌شده یا کمتر برسد، این مورد تسویه‌شده علامت می‌خورد.",
+                            color = TextTertiary,
+                            fontFamily = Vazirmatn,
+                            fontSize = 11.sp,
+                            textAlign = TextAlign.Right,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (editStage == DebtEditStage.IDLE) {
+                            scope.launch {
+                                editStage = DebtEditStage.LOADING
+                                delay(700)
+                                DebtRepository.updateDebt(
+                                    debt.copy(
+                                        personName = nameText.trim(),
+                                        amount = enteredAmount,
+                                        dueDate = dueDateText,
+                                        note = noteText.trim(),
+                                        isSettled = debt.paidAmount >= enteredAmount
+                                    )
+                                )
+                                editStage = DebtEditStage.SUCCESS
+                                delay(900)
+                                editStage = DebtEditStage.IDLE
+                                onDismiss()
+                            }
+                        }
+                    },
+                    enabled = isValid && hasChanges && editStage == DebtEditStage.IDLE
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        when (editStage) {
+                            DebtEditStage.LOADING -> {
+                                CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = accentColor)
+                                Spacer(Modifier.width(6.dp))
+                                Text("...در حال ذخیره", color = accentColor, fontFamily = Vazirmatn, fontSize = 13.sp)
+                            }
+                            DebtEditStage.SUCCESS -> {
+                                Icon(Icons.Outlined.CheckCircle, null, tint = IncomeGreen, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("ذخیره شد", color = IncomeGreen, fontFamily = Vazirmatn, fontSize = 13.sp)
+                            }
+                            DebtEditStage.IDLE -> {
+                                Text(
+                                    "ذخیره",
+                                    color = if (isValid && hasChanges) accentColor else TextTertiary,
+                                    fontFamily = Vazirmatn,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = onDismiss, enabled = editStage == DebtEditStage.IDLE) {
+                    Text("انصراف", color = TextSecondary, fontFamily = Vazirmatn, fontSize = 13.sp)
+                }
+            }
+        )
+    }
+
+    // کیپد بدون پرده‌ی دوم روی همین دیالوگ باز می‌شود — بدون پرش
+    if (showAmountKeypad) {
+        AmountKeypadDialog(
+            initialAmount = amountText,
+            accentColor = accentColor,
+            onDismiss = { showAmountKeypad = false },
+            onConfirm = { newAmount ->
+                amountText = newAmount
+                showAmountKeypad = false
+            },
+            dimBehind = false
+        )
+    }
+
+    // تقویم هم بدون پرده‌ی دوم روی همین دیالوگ باز می‌شود — بدون پرش
+    if (showDatePicker) {
+        PersianDatePickerDialog(
+            initialDate = dueDateText,
+            accentColor = accentColor,
+            onDismiss = { showDatePicker = false },
+            onConfirm = { newDate ->
+                dueDateText = newDate
+                showDatePicker = false
+            },
+            dimBehind = false
+        )
+    }
+}
+
 @Composable
 private fun SettleDebtDialog(
     navController: NavController,
@@ -464,6 +1194,8 @@ private fun SettleDebtDialog(
         AlertDialog(
             onDismissRequest = { if (settleStage == DebtSettleStage.IDLE) onDismiss() },
             containerColor = CardWhite,
+            // وقتی کیپد باز است، محتوای والد نامرئی می‌شود ولی پنجره و پرده زنده می‌مانند
+            modifier = Modifier.alpha(if (showKeypad) 0f else 1f),
             title = {
                 Text(
                     if (isReceivable) "دریافت مبلغ از ${debt.personName}" else "پرداخت مبلغ به ${debt.personName}",
@@ -612,6 +1344,7 @@ private fun SettleDebtDialog(
         )
     }
 
+    // کیپد بدون پرده‌ی دوم روی همین دیالوگ باز می‌شود — بدون پرش
     if (showKeypad) {
         AmountKeypadDialog(
             initialAmount = amountText,
@@ -620,7 +1353,8 @@ private fun SettleDebtDialog(
             onConfirm = { newAmount ->
                 amountText = newAmount
                 showKeypad = false
-            }
+            },
+            dimBehind = false
         )
     }
 }
