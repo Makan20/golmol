@@ -30,10 +30,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBackIos
+import androidx.compose.material.icons.outlined.AccountBalanceWallet
+import androidx.compose.material.icons.outlined.BarChart
 import androidx.compose.material.icons.outlined.Eco
 import androidx.compose.material.icons.outlined.Groups
-import androidx.compose.material.icons.outlined.RequestQuote
-import androidx.compose.material.icons.outlined.ShowChart
+import androidx.compose.material.icons.outlined.ShoppingBag
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -82,23 +83,30 @@ private val onboardingPages = listOf(
         description = "دستیار ساده و شخصی‌ات برای مدیریت هزینه‌ها، بدهی‌ها و برنامه‌های مالی روزمره"
     ),
     OnboardingPage(
-        icon = Icons.Outlined.ShowChart,
+        icon = Icons.Outlined.BarChart,
         iconTint = ExpensePurple,
         iconBackground = ExpensePurple.copy(alpha = 0.10f),
         title = "تراکنش‌ها و گزارش‌ها",
         description = "درآمد و هزینه‌هاتو ثبت کن و روند خرج‌کردنت رو با نمودارهای ساده و شفاف ببین"
     ),
     OnboardingPage(
-        icon = Icons.Outlined.Groups,
+        icon = Icons.Outlined.ShoppingBag,
         iconTint = PrimaryGreen,
         iconBackground = PrimaryGreen.copy(alpha = 0.10f),
+        title = "لیست خرید هوشمند",
+        description = "چیزهایی که باید بخری رو اضافه کن و بعد از خرید، مستقیم به تراکنش‌هات تبدیلش کن"
+    ),
+    OnboardingPage(
+        icon = Icons.Outlined.Groups,
+        iconTint = ExpensePurple,
+        iconBackground = ExpensePurple.copy(alpha = 0.10f),
         title = "دونگ: تقسیم هزینه‌ی گروهی",
         description = "هزینه‌ی سفر یا خرید گروهی رو بین دوستات تقسیم کن و ببین کی به کی بدهکاره"
     ),
     OnboardingPage(
-        icon = Icons.Outlined.RequestQuote,
-        iconTint = ExpensePurple,
-        iconBackground = ExpensePurple.copy(alpha = 0.10f),
+        icon = Icons.Outlined.AccountBalanceWallet,
+        iconTint = PrimaryGreen,
+        iconBackground = PrimaryGreen.copy(alpha = 0.10f),
         title = "طلب و بدهی رو گم نکن",
         description = "هرکی بهت بدهکاره یا بهش بدهکاری رو با یادآوری سررسید، همیشه زیر نظر داشته باش"
     )
