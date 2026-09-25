@@ -302,11 +302,6 @@ fun ReportsScreen(navController: NavController, viewModel: TransactionViewModel)
                     }
 
                     item {
-                        TrendChartCard(trendData)
-                        Spacer(modifier = Modifier.height(16.dp))
-                    }
-
-                    item {
                         CategoryBreakdownCard(
                             expenseCategories = expenseByCategory,
                             incomeCategories = incomeByCategory,
@@ -370,20 +365,47 @@ fun ReportsScreen(navController: NavController, viewModel: TransactionViewModel)
                     }
 
                     item {
-    AccountMinMaxCard(accountExtremes, showAmount = showAmountInReports.value)
-    Spacer(modifier = Modifier.height(16.dp))
-    DebtBreakdownCard(showAmount = showAmountInReports.value)
-    Spacer(modifier = Modifier.height(8.dp))
-    Text(
-        "برای تغییر درصد به مبلغ از تنظیمات اقدام کنید",
-        style = MaterialTheme.typography.bodySmall,
-        color = TextSecondary.copy(alpha = 0.7f),
-        fontFamily = Vazirmatn,
-        textAlign = TextAlign.Center,
-        modifier = Modifier.fillMaxWidth()
-    )
-    Spacer(modifier = Modifier.height(130.dp))
-}
+                        AccountMinMaxCard(accountExtremes, showAmount = showAmountInReports.value)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        DebtBreakdownCard(showAmount = showAmountInReports.value)
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // این راهنما فقط به کارت‌های درصدی/مبلغی بالا (دسته‌بندی، مبلغ بر
+                        // اساس کارت، بیشترین/کمترین، طلب و بدهی) مربوط است، نه به نمودار
+                        // روند ۶ ماهه که زیرش می‌آید — پس همین‌جا، بلافاصله بعد از
+                        // DebtBreakdownCard (آخرین کارت درصدی) قرار گرفت
+                        Text(
+                            "برای تغییر درصد به مبلغ از تنظیمات اقدام کنید",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextSecondary.copy(alpha = 0.7f),
+                            fontFamily = Vazirmatn,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // «روند ۶ ماه اخیر» عمداً به انتهای صفحه منتقل شد (قبلاً دومین کارت
+                        // بعد از خلاصه‌ی بالای صفحه بود و کاربر تازه‌وارد ممکن بود این نمودار
+                        // را با محاسبات بازه‌ی انتخابی اشتباه بگیرد، چون این نمودار همیشه بر
+                        // پایه‌ی ۶ ماه اخیر است، نه بازه‌ی روز/هفته/ماه/سالِ فیلترشده). این
+                        // کارت با درصد/مبلغ کاری ندارد، پس عمداً بعد از متن راهنمای بالا آمد.
+                        TrendChartCard(trendData)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        // راهنمای تعاملی زیر همین نمودار — دقیقاً هم‌الگو با راهنماهای دیگر
+                        // صفحه (مثلاً «برای ویرایش به راست و برای حذف به چپ بکشید» در
+                        // TransactionScreen)؛ چون این نمودار با تپ روی هر میله جزئیات همان
+                        // ماه را در چیپ‌های بالا نشان می‌دهد (ر.ک. TrendChartCard/TrendBarChart)
+                        // و این قابلیت بدون یک راهنمای کوچک، برای کاربر قابل کشف نیست
+                        Text(
+                            "برای دیدن جزئیات روی نمودار بزنید",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextSecondary.copy(alpha = 0.7f),
+                            fontFamily = Vazirmatn,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(modifier = Modifier.height(130.dp))
+                    }
                 }
             }
 
@@ -750,6 +772,7 @@ private fun TrendChartCard(data: List<Triple<String, Long, Long>>) {
                                 style = MaterialTheme.typography.labelSmall,
                                 color = if (selectedIndex == index) TextPrimary else TextTertiary,
                                 fontWeight = if (selectedIndex == index) FontWeight.Bold else FontWeight.Medium,
+                                fontFamily = Vazirmatn,
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier.weight(1f)
                             )
