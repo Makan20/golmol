@@ -1,0 +1,1226 @@
+package com.ordibehesht.finance.ui.screens
+
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.*
+import androidx.compose.material.icons.automirrored.outlined.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.NavController
+import com.ordibehesht.finance.data.model.Account
+import com.ordibehesht.finance.data.model.Debt
+import com.ordibehesht.finance.data.model.Transaction
+import com.ordibehesht.finance.data.model.TransactionType
+import com.ordibehesht.finance.data.repository.DebtRepository
+import com.ordibehesht.finance.ui.theme.*
+import com.ordibehesht.finance.ui.utils.PersianDateUtils
+import com.ordibehesht.finance.ui.viewmodel.TransactionViewModel
+
+enum class PeriodType { DAY, WEEK, MONTH, YEAR }
+
+// فیلتر نوع: null = همه، INCOME/EXPENSE = عادی، DEBT = طلب و بدهی و وام (تراکنش‌هایی که به
+// یک بدهی وصل‌اند)، TRANSFER = فقط انتقال‌های بین کارت‌های خودِ کاربر
+enum class TxnFilter { INCOME, EXPENSE, DEBT, TRANSFER }
+
+private fun Transaction.matchesFilter(filter: TxnFilter?): Boolean = when (filter) {
+    null -> true
+    TxnFilter.INCOME -> type == TransactionType.INCOME && debtId == null && transferGroupId == null
+    TxnFilter.EXPENSE -> type == TransactionType.EXPENSE && debtId == null && transferGroupId == null
+    TxnFilter.DEBT -> debtId != null
+    TxnFilter.TRANSFER -> transferGroupId != null
+}
+
+// فیلتر پیشرفته: یا بر اساس کارت (چند کارت هم‌زمان قابل انتخاب)، یا بر اساس دسته‌بندی
+// (هزینه و درآمد با هم، چند دسته هم‌زمان قابل انتخاب) — این دو حالت متقابلاً انحصاری‌اند،
+// چون طبق تصمیم محصول فعلاً همزمان فقط یکی از این دو نوع فیلتر فعال می‌شود
+enum class AdvancedFilterMode { ACCOUNT, CATEGORY }
+
+data class AdvancedFilter(
+    val mode: AdvancedFilterMode = AdvancedFilterMode.ACCOUNT,
+    val selectedAccountIds: Set<Int> = emptySet(),
+    val selectedCategories: Set<String> = emptySet()
+) {
+    val isActive: Boolean
+        get() = when (mode) {
+            AdvancedFilterMode.ACCOUNT -> selectedAccountIds.isNotEmpty()
+            AdvancedFilterMode.CATEGORY -> selectedCategories.isNotEmpty()
+        }
+}
+
+private fun Transaction.matchesAdvancedFilter(filter: AdvancedFilter): Boolean {
+    if (!filter.isActive) return true
+    return when (filter.mode) {
+        AdvancedFilterMode.ACCOUNT -> accountId != null && accountId in filter.selectedAccountIds
+        AdvancedFilterMode.CATEGORY -> category in filter.selectedCategories
+    }
+}
+
+fun filterByPeriod(
+    transactions: List<Transaction>,
+    periodType: PeriodType,
+    year: Int,
+    month: Int,
+    weekOffset: Int = 0,
+    dayOffset: Int = 0
+): List<Transaction> {
+    return when (periodType) {
+        PeriodType.DAY -> {
+            val dayDate = PersianDateUtils.addDaysToToday(dayOffset)
+            transactions.filter { it.date == dayDate }
+        }
+        PeriodType.WEEK -> {
+            val weekDates = PersianDateUtils.getWeekDates(weekOffset)
+            transactions.filter { it.date in weekDates }
+        }
+        PeriodType.MONTH -> transactions.filter { t ->
+            val parts = t.date.split("/")
+            parts.getOrNull(0)?.toIntOrNull() == year && parts.getOrNull(1)?.toIntOrNull() == month
+        }
+        PeriodType.YEAR -> transactions.filter { t ->
+            t.date.split("/").getOrNull(0)?.toIntOrNull() == year
+        }
+    }
+}
+
+enum class SortOrder { ASCENDING, DESCENDING }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TransactionScreen(navController: NavController, viewModel: TransactionViewModel) {
+    val listState = rememberLazyListState()
+    val transactions by viewModel.transactions.collectAsStateWithLifecycle()
+    val accounts by com.ordibehesht.finance.data.repository.AccountRepository.accounts.collectAsStateWithLifecycle()
+    val allDebts by DebtRepository.debts.collectAsStateWithLifecycle()
+    var filterType by remember { mutableStateOf<TxnFilter?>(null) }
+    var showSearch by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+    var sortOrder by remember { mutableStateOf<SortOrder?>(null) }
+    var showAdvancedFilterDialog by remember { mutableStateOf(false) }
+    var advancedFilter by remember { mutableStateOf(AdvancedFilter()) }
+
+    // برای امکان «برگردون» بعد از حذف تراکنش با سوایپ — یک سوایپ اشتباه نباید
+    // بدون هیچ فرصتی برای جبران، تراکنش را برای همیشه از بین ببرد
+    var pendingDelete by remember { mutableStateOf<PendingUndo<Transaction>?>(null) }
+
+    fun deleteWithUndo(transaction: Transaction) {
+        viewModel.deleteTransaction(transaction)
+        pendingDelete = PendingUndo(transaction)
+    }
+
+    var periodType by remember { mutableStateOf(PeriodType.MONTH) }
+    val currentYearMonth = remember {
+        val parts = PersianDateUtils.getCurrentPersianDate().split("/")
+        (parts.getOrNull(0)?.toIntOrNull() ?: 1404) to (parts.getOrNull(1)?.toIntOrNull() ?: 1)
+    }
+    var selectedYear by remember { mutableStateOf(currentYearMonth.first) }
+    var selectedMonth by remember { mutableStateOf(currentYearMonth.second) }
+    var weekOffset by remember { mutableStateOf(0) }
+    var dayOffset by remember { mutableStateOf(0) }
+
+    val periodFiltered = filterByPeriod(transactions, periodType, selectedYear, selectedMonth, weekOffset, dayOffset)
+
+    val filtered = when {
+        searchQuery.isNotBlank() -> {
+            transactions.filter { t ->
+                val matchesSearch = t.title.contains(searchQuery, ignoreCase = true) ||
+                        t.category.contains(searchQuery, ignoreCase = true) ||
+                        (accounts.find { it.id == t.accountId }?.name?.contains(searchQuery, ignoreCase = true) == true)
+                matchesSearch && t.matchesFilter(filterType) && t.matchesAdvancedFilter(advancedFilter)
+            }
+        }
+        else -> periodFiltered.filter { it.matchesFilter(filterType) && it.matchesAdvancedFilter(advancedFilter) }
+    }.let { list ->
+        when (sortOrder) {
+            SortOrder.ASCENDING -> list.sortedBy { it.amount }
+            SortOrder.DESCENDING -> list.sortedByDescending { it.amount }
+            null -> list
+        }
+    }
+
+    val emptyMessage = when {
+        searchQuery.isNotBlank() -> "نتیجه‌ای پیدا نشد"
+        transactions.isEmpty() -> "هنوز تراکنشی ثبت نشده"
+        else -> "تراکنشی در این بازه نیست"
+    }
+
+    val grouped = filtered.groupBy { it.date }
+    val today = PersianDateUtils.getCurrentPersianDate()
+    val yesterday = PersianDateUtils.getYesterdayPersianDate()
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        "تراکنش‌ها",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = TextPrimary,
+                        fontFamily = Vazirmatn
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = { navController.popBackStack() }) {
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, "بازگشت", tint = TextPrimary)
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { showAdvancedFilterDialog = true }) {
+                        Icon(
+                            Icons.Outlined.FilterList,
+                            contentDescription = "فیلتر پیشرفته",
+                            tint = if (advancedFilter.isActive) PrimaryGreen else TextPrimary
+                        )
+                    }
+                    IconButton(
+                        onClick = {
+                            showSearch = !showSearch
+                            if (!showSearch) {
+                                searchQuery = ""
+                                sortOrder = null
+                            }
+                        }
+                    ) {
+                        Icon(
+                            if (showSearch) Icons.Outlined.Close else Icons.Outlined.Search,
+                            if (showSearch) "بستن جستجو" else "جستجو",
+                            tint = if (showSearch) PrimaryGreen else TextPrimary
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = BackgroundLight)
+            )
+        },
+        containerColor = BackgroundLight
+    ) { padding ->
+        Box(modifier = Modifier.fillMaxSize()) {
+            FlowerDecoration(
+                modifier = Modifier.align(Alignment.TopEnd).padding(top = 100.dp, end = 4.dp).size(56.dp)
+            )
+            FlowerDecoration(
+                modifier = Modifier.align(Alignment.BottomStart).padding(bottom = 60.dp, start = 4.dp).size(44.dp),
+                color = ExpensePurple.copy(alpha = 0.08f)
+            )
+
+            CompositionLocalProvider(
+                androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Rtl
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding)
+                        .padding(horizontal = 16.dp)
+                ) {
+                    if (showSearch) {
+                        SearchField(
+                            query = searchQuery,
+                            onQueryChange = { newQuery ->
+                                if (searchQuery.isBlank() && newQuery.isNotBlank()) {
+                                    filterType = null
+                                }
+                                if (newQuery.isBlank()) {
+                                    sortOrder = null
+                                }
+                                searchQuery = newQuery
+                            },
+                            sortOrder = sortOrder,
+                            onSortOrderChange = { newSort ->
+                                sortOrder = newSort
+                                when (newSort) {
+                                    SortOrder.ASCENDING -> filterType = TxnFilter.INCOME
+                                    SortOrder.DESCENDING -> filterType = TxnFilter.EXPENSE
+                                    null -> Unit
+                                }
+                            }
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                    }
+
+                    FilterChips(
+                        selectedType = filterType,
+                        onTypeSelected = { newType ->
+                            filterType = newType
+                            val mismatch = when (sortOrder) {
+                                SortOrder.ASCENDING -> newType != TxnFilter.INCOME
+                                SortOrder.DESCENDING -> newType != TxnFilter.EXPENSE
+                                null -> false
+                            }
+                            if (mismatch) sortOrder = null
+                        },
+                        periodType = periodType,
+                        onPeriodSelected = { periodType = it },
+                        selectedYear = selectedYear,
+                        selectedMonth = selectedMonth,
+                        weekOffset = weekOffset,
+                        dayOffset = dayOffset,
+                        onPreviousMonth = {
+                            if (selectedMonth == 1) {
+                                selectedMonth = 12
+                                selectedYear -= 1
+                            } else {
+                                selectedMonth -= 1
+                            }
+                        },
+                        onNextMonth = {
+                            if (selectedMonth == 12) {
+                                selectedMonth = 1
+                                selectedYear += 1
+                            } else {
+                                selectedMonth += 1
+                            }
+                        },
+                        onPreviousYear = { selectedYear -= 1 },
+                        onNextYear = { selectedYear += 1 },
+                        onPreviousWeek = { weekOffset -= 1 },
+                        onNextWeek = { if (weekOffset < 0) weekOffset += 1 },
+                        onPreviousDay = { dayOffset -= 1 },
+                        onNextDay = { if (dayOffset < 0) dayOffset += 1 },
+                        hasTransfers = remember(transactions) { transactions.any { it.transferGroupId != null } }
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    if (filtered.isEmpty()) {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                FlowerDecoration(
+                                    modifier = Modifier.size(52.dp),
+                                    color = ExpensePurple.copy(alpha = 0.14f)
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    emptyMessage,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = TextSecondary,
+                                    fontFamily = Vazirmatn
+                                )
+                            }
+                        }
+                    } else {
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(bottom = 130.dp)
+                        ) {
+                            if (sortOrder != null) {
+                                // Sort is active: show one continuous list ordered by amount,
+                                // bypassing date-based grouping so the sort is visible across all results.
+                                item(key = "sorted_flat_list") {
+                                    Card(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 4.dp),
+                                        shape = RoundedCornerShape(20.dp),
+                                        colors = CardDefaults.cardColors(containerColor = CardWhite),
+                                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                                    ) {
+                                        Column(modifier = Modifier.padding(16.dp)) {
+                                            filtered.forEachIndexed { index, transaction ->
+                                                TransactionEntry(
+                                                    transaction = transaction,
+                                                    accounts = accounts,
+                                                    debts = allDebts,
+                                                    onDelete = { deleteWithUndo(transaction) },
+                                                    navController = navController
+                                                )
+                                                if (index < filtered.size - 1) {
+                                                    HorizontalDivider(
+                                                        modifier = Modifier.padding(vertical = 8.dp),
+                                                        color = DividerColor.copy(alpha = 0.5f)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                // Sort grouped entries: today first, then yesterday, then others
+                                val sortedEntries = grouped.entries.sortedWith(
+                                    compareBy<Map.Entry<String, List<Transaction>>> { (date, _) ->
+                                        when (date) {
+                                            today -> 0
+                                            yesterday -> 1
+                                            else -> 2
+                                        }
+                                    }.thenByDescending { (date, _) -> date }
+                                )
+
+                                sortedEntries.forEach { (date, items) ->
+                                    val dayLabel = when (date) {
+                                        today -> "امروز"
+                                        yesterday -> "دیروز"
+                                        else -> ""
+                                    }
+                                    item(key = "header_$date") {
+                                        DateSectionHeader(date, dayLabel, items)
+                                    }
+                                    item(key = "card_$date") {
+                                        Card(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 4.dp),
+                                            shape = RoundedCornerShape(20.dp),
+                                            colors = CardDefaults.cardColors(containerColor = CardWhite),
+                                            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                                        ) {
+                                            Column(modifier = Modifier.padding(16.dp)) {
+                                                items.forEachIndexed { index, transaction ->
+                                                    TransactionEntry(
+                                                        transaction = transaction,
+                                                        accounts = accounts,
+                                                        debts = allDebts,
+                                                        onDelete = { deleteWithUndo(transaction) },
+                                                        navController = navController
+                                                    )
+                                                    if (index < items.size - 1) {
+                                                        HorizontalDivider(
+                                                            modifier = Modifier.padding(vertical = 8.dp),
+                                                            color = DividerColor.copy(alpha = 0.5f)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            item {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    "برای ویرایش به راست و برای حذف به چپ بکشید",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TextSecondary.copy(alpha = 0.7f),
+                                    fontFamily = Vazirmatn,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Spacer(modifier = Modifier.height(16.dp))
+
+                                // کارت خلاصه فقط برای فیلتر «همه» نمایش داده می‌شود، چون این
+                                // نمودار ذاتاً مقایسه‌ی درآمد و هزینه است — برای فیلترهای
+                                // تک‌نوعی (فقط درآمد یا فقط هزینه) هیچ مقایسه‌ای وجود ندارد و
+                                // نوار همیشه یک‌رنگ و کامل می‌شد، که اطلاعات اضافه‌ای نمی‌داد
+                                val periodIncome = periodFiltered.filter { it.type == TransactionType.INCOME && it.transferGroupId == null }.sumOf { it.amount }
+                                val periodExpense = periodFiltered.filter { it.type == TransactionType.EXPENSE && it.transferGroupId == null }.sumOf { it.amount }
+                                if (filterType == null && (periodIncome > 0L || periodExpense > 0L)) {
+                                    PeriodDonutSummaryCard(
+                                        periodType = periodType,
+                                        filterType = filterType,
+                                        income = periodIncome,
+                                        expense = periodExpense
+                                    )
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Box(modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 16.dp, vertical = 16.dp)) {
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = !listState.canScrollForward,
+                    enter = androidx.compose.animation.fadeIn(),
+                    exit = androidx.compose.animation.fadeOut()
+                ) {
+                    BottomNavBar(navController, currentRoute = "transactions", isScrolling = listState.isScrollInProgress)
+                }
+            }
+
+            // این عمداً بعد از BottomNavBar (که خودش شامل FAB شناور است) نوشته شده تا در
+            // ترتیب رندر Compose روی آن قرار بگیرد — وگرنه FAB و نوار پایین بخشی از نوار
+            // Undo را می‌پوشانند و دکمه‌ی «برگردون» غیرقابل‌کلیک می‌شود.
+            // فاصله‌ی ۱۱۲dp از پایین = ۱۶dp (padding پایین BottomNavBar) + ۹۶dp (ارتفاع کامل
+            // BottomNavBar شامل فضای بیرون‌زدگی FAB) — تا نوار Undo کاملاً بالای نوک FAB بنشیند
+            UndoDeleteSnackbar(
+                pending = pendingDelete,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 112.dp),
+                onExpired = { pendingDelete = null },
+                onUndo = { transaction ->
+                    // id صفر می‌شود تا Room برای رکورد بازگردانده‌شده یک id جدید تولید کند —
+                    // چون id قبلی دیگر در جدول وجود ندارد و منطقاً هم نیازی به همان id نیست
+                    viewModel.addTransaction(transaction.copy(id = 0))
+                    pendingDelete = null
+                }
+            )
+
+            if (showAdvancedFilterDialog) {
+                AdvancedFilterDialog(
+                    accounts = accounts,
+                    initialFilter = advancedFilter,
+                    onDismiss = { showAdvancedFilterDialog = false },
+                    onClear = {
+                        advancedFilter = AdvancedFilter()
+                        showAdvancedFilterDialog = false
+                    },
+                    onConfirm = { result ->
+                        advancedFilter = result
+                        showAdvancedFilterDialog = false
+                    }
+                )
+            }
+        }
+    }
+}
+
+// تراکنش مرتبط با بدهی/وام (debtId != null) سوایپ نمی‌شود؛
+// با کلیک به صفحه‌ی جزئیات همان بدهی یا وام می‌رود — مدیریت فقط از بخش بدهی‌ها.
+@Composable
+private fun TransactionEntry(
+    transaction: Transaction,
+    accounts: List<Account>,
+    debts: List<Debt>,
+    onDelete: () -> Unit,
+    navController: NavController
+) {
+    val accountName = accounts.find { it.id == transaction.accountId }?.name
+
+    if (transaction.debtId == null) {
+        SwipeableTransactionItem(
+            transactionId = transaction.id,
+            title = transaction.title,
+            date = transaction.date,
+            note = transaction.note,
+            amount = transaction.amount,
+            type = transaction.type,
+            category = transaction.category,
+            onDelete = onDelete,
+            onEdit = { navController.navigate("edit_transaction/${transaction.id}") },
+            accountName = accountName
+        )
+    } else {
+        val relatedDebt = debts.find { it.id == transaction.debtId }
+        Box(
+            modifier = Modifier.clickable {
+                when {
+                    relatedDebt?.loanGroupId != null -> navController.navigate("loan_detail/${relatedDebt.loanGroupId}")
+                    relatedDebt != null -> navController.navigate("debt_detail/${relatedDebt.id}")
+                    else -> navController.navigate("debts") { launchSingleTop = true }
+                }
+            }
+        ) {
+            TransactionItem(
+                title = transaction.title,
+                date = transaction.date,
+                note = transaction.note,
+                amount = transaction.amount,
+                type = transaction.type,
+                category = transaction.category,
+                accountName = accountName
+            )
+        }
+    }
+}
+
+@Composable
+fun SearchField(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    sortOrder: SortOrder?,
+    onSortOrderChange: (SortOrder?) -> Unit
+) {
+    OutlinedTextField(
+        value = query,
+        onValueChange = onQueryChange,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        singleLine = true,
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = PrimaryGreen,
+            unfocusedBorderColor = DividerColor,
+            focusedContainerColor = CardWhite,
+            unfocusedContainerColor = CardWhite
+        ),
+        placeholder = {
+            Text(
+                "جستجو در عنوان، دسته‌بندی یا کارت...",
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Right,
+                color = TextTertiary,
+                fontSize = 14.sp,
+                fontFamily = Vazirmatn
+            )
+        },
+        textStyle = LocalTextStyle.current.copy(
+            textAlign = TextAlign.Right,
+            fontSize = 15.sp,
+            fontFamily = Vazirmatn
+        ),
+        leadingIcon = {
+            Icon(Icons.Outlined.Search, null, tint = TextTertiary)
+        },
+        trailingIcon = {
+            if (query.isNotEmpty()) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    SortDotButton(
+                        icon = Icons.Outlined.ArrowUpward,
+                        contentDescription = "مرتب‌سازی از کم به زیاد",
+                        color = IncomeGreen,
+                        active = sortOrder == SortOrder.ASCENDING,
+                        onClick = {
+                            onSortOrderChange(if (sortOrder == SortOrder.ASCENDING) null else SortOrder.ASCENDING)
+                        }
+                    )
+                    SortDotButton(
+                        icon = Icons.Outlined.ArrowDownward,
+                        contentDescription = "مرتب‌سازی از زیاد به کم",
+                        color = ExpensePurple,
+                        active = sortOrder == SortOrder.DESCENDING,
+                        onClick = {
+                            onSortOrderChange(if (sortOrder == SortOrder.DESCENDING) null else SortOrder.DESCENDING)
+                        }
+                    )
+                    IconButton(onClick = { onQueryChange("") }) {
+                        Icon(Icons.Outlined.Close, "پاک کردن", tint = TextTertiary)
+                    }
+                }
+            }
+        }
+    )
+}
+
+@Composable
+fun SortDotButton(
+    icon: ImageVector,
+    contentDescription: String,
+    color: Color,
+    active: Boolean,
+    onClick: () -> Unit
+) {
+    val bgColor by animateColorAsState(
+        targetValue = if (active) color else color.copy(alpha = 0.12f),
+        label = "sortDotBg"
+    )
+    val iconTint by animateColorAsState(
+        targetValue = if (active) Color.White else color,
+        label = "sortDotIcon"
+    )
+    Box(
+        modifier = Modifier
+            .size(30.dp)
+            .clip(CircleShape)
+            .background(bgColor)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(icon, contentDescription, tint = iconTint, modifier = Modifier.size(16.dp))
+    }
+}
+
+@Composable
+fun FilterChips(
+    selectedType: TxnFilter?,
+    onTypeSelected: (TxnFilter?) -> Unit,
+    periodType: PeriodType,
+    onPeriodSelected: (PeriodType) -> Unit,
+    selectedYear: Int,
+    selectedMonth: Int,
+    weekOffset: Int,
+    dayOffset: Int,
+    onPreviousMonth: () -> Unit,
+    onNextMonth: () -> Unit,
+    onPreviousYear: () -> Unit,
+    onNextYear: () -> Unit,
+    onPreviousWeek: () -> Unit,
+    onNextWeek: () -> Unit,
+    onPreviousDay: () -> Unit,
+    onNextDay: () -> Unit,
+    hasTransfers: Boolean = false
+) {
+    val accentColor = when (selectedType) {
+        TxnFilter.INCOME -> IncomeGreen
+        TxnFilter.EXPENSE -> ExpensePurple
+        TxnFilter.DEBT -> WarningAmber
+        TxnFilter.TRANSFER -> PrimaryGreen
+        null -> PrimaryGreen
+    }
+
+    Column {
+        TypeFilterRow(selectedType = selectedType, onTypeSelected = onTypeSelected, hasTransfers = hasTransfers)
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        PeriodFilterRow(
+            periodType = periodType,
+            accentColor = accentColor,
+            onPeriodSelected = onPeriodSelected
+        )
+
+        when (periodType) {
+            PeriodType.DAY -> {
+                Spacer(modifier = Modifier.height(10.dp))
+                DayNavigator(
+                    dayOffset = dayOffset,
+                    onPrevious = onPreviousDay,
+                    onNext = onNextDay
+                )
+            }
+            PeriodType.WEEK -> {
+                Spacer(modifier = Modifier.height(10.dp))
+                WeekNavigator(
+                    weekOffset = weekOffset,
+                    onPrevious = onPreviousWeek,
+                    onNext = onNextWeek
+                )
+            }
+            PeriodType.MONTH -> {
+                Spacer(modifier = Modifier.height(10.dp))
+                MonthNavigator(
+                    year = selectedYear,
+                    month = selectedMonth,
+                    onPrevious = onPreviousMonth,
+                    onNext = onNextMonth
+                )
+            }
+            PeriodType.YEAR -> {
+                Spacer(modifier = Modifier.height(10.dp))
+                YearNavigator(
+                    year = selectedYear,
+                    onPrevious = onPreviousYear,
+                    onNext = onNextYear
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun TypeFilterRow(
+    selectedType: TxnFilter?,
+    onTypeSelected: (TxnFilter?) -> Unit,
+    hasTransfers: Boolean = false
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.SpaceEvenly
+    ) {
+        TypeFilterItem(
+            label = "وام",
+            icon = Icons.Outlined.CreditCard,
+            color = WarningAmber,
+            selected = selectedType == TxnFilter.DEBT,
+            onClick = { onTypeSelected(TxnFilter.DEBT) }
+        )
+        TypeFilterItem(
+            label = "هزینه‌ها",
+            icon = Icons.AutoMirrored.Outlined.TrendingDown,
+            color = ExpensePurple,
+            selected = selectedType == TxnFilter.EXPENSE,
+            onClick = { onTypeSelected(TxnFilter.EXPENSE) }
+        )
+        TypeFilterItem(
+            label = "درآمدها",
+            icon = Icons.AutoMirrored.Outlined.TrendingUp,
+            color = IncomeGreen,
+            selected = selectedType == TxnFilter.INCOME,
+            onClick = { onTypeSelected(TxnFilter.INCOME) }
+        )
+        // چیپ «انتقال‌ها» فقط وقتی نشان داده می‌شود که کاربر حداقل یک انتقال بین کارت‌ها
+        // ثبت کرده باشد — برای کسی که هنوز از این قابلیت استفاده نکرده، فیلتر بی‌فایده و
+        // فقط باعث شلوغی نوار فیلتر می‌شود
+        if (hasTransfers) {
+            TypeFilterItem(
+                label = "انتقال‌ها",
+                icon = Icons.AutoMirrored.Outlined.CompareArrows,
+                color = PrimaryGreen,
+                selected = selectedType == TxnFilter.TRANSFER,
+                onClick = { onTypeSelected(TxnFilter.TRANSFER) }
+            )
+        }
+        TypeFilterItem(
+            label = "همه",
+            icon = Icons.AutoMirrored.Outlined.List,
+            color = PrimaryGreen,
+            selected = selectedType == null,
+            onClick = { onTypeSelected(null) }
+        )
+    }
+}
+
+@Composable
+fun PeriodFilterRow(
+    periodType: PeriodType,
+    accentColor: Color,
+    onPeriodSelected: (PeriodType) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceEvenly
+    ) {
+        TypeFilterItem(
+            label = "روز",
+            icon = Icons.Outlined.Today,
+            color = accentColor,
+            selected = periodType == PeriodType.DAY,
+            onClick = { onPeriodSelected(PeriodType.DAY) }
+        )
+        TypeFilterItem(
+            label = "هفته",
+            icon = Icons.Outlined.DateRange,
+            color = accentColor,
+            selected = periodType == PeriodType.WEEK,
+            onClick = { onPeriodSelected(PeriodType.WEEK) }
+        )
+        TypeFilterItem(
+            label = "ماه",
+            icon = Icons.Outlined.CalendarToday,
+            color = accentColor,
+            selected = periodType == PeriodType.MONTH,
+            onClick = { onPeriodSelected(PeriodType.MONTH) }
+        )
+        TypeFilterItem(
+            label = "سال",
+            icon = Icons.Outlined.Event,
+            color = accentColor,
+            selected = periodType == PeriodType.YEAR,
+            onClick = { onPeriodSelected(PeriodType.YEAR) }
+        )
+    }
+}
+
+@Composable
+fun DayNavigator(
+    dayOffset: Int,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit
+) {
+    val date = PersianDateUtils.addDaysToToday(dayOffset)
+    val label = when (dayOffset) {
+        0 -> "امروز"
+        -1 -> "دیروز"
+        else -> PersianDateUtils.toPersianDigits(date)
+    }
+    PeriodNavigatorBar(
+        label = label,
+        nextContentDescription = "روز بعد",
+        previousContentDescription = "روز قبل",
+        nextEnabled = dayOffset < 0,
+        onPrevious = onPrevious,
+        onNext = onNext
+    )
+}
+
+@Composable
+fun WeekNavigator(
+    weekOffset: Int,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit
+) {
+    val weekDates = PersianDateUtils.getWeekDates(weekOffset)
+    val first = weekDates.first().split("/")
+    val last = weekDates.last().split("/")
+    val label = if (weekOffset == 0) {
+        "هفته‌ی جاری"
+    } else {
+        val rangeText = "${PersianDateUtils.toPersianDigits(first[2])} ${PersianDateUtils.persianMonthNames.getOrElse(first[1].toIntOrNull()?.minus(1) ?: 0) { "" }}" +
+                " تا " +
+                "${PersianDateUtils.toPersianDigits(last[2])} ${PersianDateUtils.persianMonthNames.getOrElse(last[1].toIntOrNull()?.minus(1) ?: 0) { "" }}"
+        if (first[0] != last[0]) rangeText + " " + PersianDateUtils.toPersianDigits(last[0]) else rangeText
+    }
+    PeriodNavigatorBar(
+        label = label,
+        nextContentDescription = "هفته‌ی بعد",
+        previousContentDescription = "هفته‌ی قبل",
+        nextEnabled = weekOffset < 0,
+        onPrevious = onPrevious,
+        onNext = onNext
+    )
+}
+
+@Composable
+fun MonthNavigator(
+    year: Int,
+    month: Int,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit
+) {
+    val todayParts = PersianDateUtils.getCurrentPersianDate().split("/")
+    val currentYear = todayParts[0].toInt()
+    val currentMonth = todayParts[1].toInt()
+    val isAtOrAfterCurrent = year > currentYear || (year == currentYear && month >= currentMonth)
+    PeriodNavigatorBar(
+        label = "${PersianDateUtils.persianMonthNames.getOrElse(month - 1) { "" }} ${PersianDateUtils.toPersianDigits(year.toString())}",
+        nextContentDescription = "ماه بعد",
+        previousContentDescription = "ماه قبل",
+        nextEnabled = !isAtOrAfterCurrent,
+        onPrevious = onPrevious,
+        onNext = onNext
+    )
+}
+
+@Composable
+fun YearNavigator(
+    year: Int,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit
+) {
+    val currentYear = PersianDateUtils.getCurrentPersianDate().split("/")[0].toInt()
+    PeriodNavigatorBar(
+        label = PersianDateUtils.toPersianDigits(year.toString()),
+        nextContentDescription = "سال بعد",
+        previousContentDescription = "سال قبل",
+        nextEnabled = year < currentYear,
+        onPrevious = onPrevious,
+        onNext = onNext
+    )
+}
+
+// اسکلت مشترک همه‌ی ناوبری‌ها: دکمه‌ی «بعد» سمت راست (ابتدای RTL)، «قبل» سمت چپ
+@Composable
+private fun PeriodNavigatorBar(
+    label: String,
+    nextContentDescription: String,
+    previousContentDescription: String,
+    nextEnabled: Boolean,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(CardWhite)
+            .padding(vertical = 4.dp, horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        // Declared first -> right side in RTL: go to the next period
+        IconButton(onClick = onNext, enabled = nextEnabled) {
+            Icon(
+                Icons.Outlined.ChevronRight,
+                nextContentDescription,
+                tint = if (nextEnabled) TextSecondary else TextTertiary.copy(alpha = 0.35f)
+            )
+        }
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = TextPrimary,
+            fontWeight = FontWeight.Bold,
+            fontFamily = Vazirmatn
+        )
+        // Declared last -> left side in RTL: go to the previous period
+        IconButton(onClick = onPrevious) {
+            Icon(Icons.Outlined.ChevronLeft, previousContentDescription, tint = TextSecondary)
+        }
+    }
+}
+
+@Composable
+fun TypeFilterItem(
+    label: String,
+    icon: ImageVector,
+    color: Color,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val bgColor by animateColorAsState(
+        targetValue = if (selected) color else color.copy(alpha = 0.12f),
+        label = "typeFilterBg"
+    )
+    val iconTint by animateColorAsState(
+        targetValue = if (selected) Color.White else color,
+        label = "typeFilterIcon"
+    )
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 4.dp, horizontal = 6.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(52.dp)
+                .clip(CircleShape)
+                .background(bgColor),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, null, tint = iconTint, modifier = Modifier.size(24.dp))
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.bodySmall,
+            color = if (selected) color else TextSecondary,
+            fontFamily = Vazirmatn,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
+        )
+    }
+}
+
+@Composable
+fun DateSectionHeader(date: String, dayLabel: String, transactions: List<Transaction>) {
+    // مجموع روزانه شامل تراکنش‌های خودکارِ تسویه‌ی بدهی/طلب هم می‌شود —
+    // چون این‌ها تراکنش مالی واقعی‌اند (پول واقعاً جابه‌جا شده). توجه: این مجموع با
+    // فیلتر «درآمد»/«هزینه» در بالای همین صفحه فرق دارد؛ آن فیلتر عمداً تسویه‌ها را
+    // کنار می‌گذارد چون هدفش دیدن جداگانه‌ی تراکنش‌های عادی است، نه مجموع کلی روز.
+    // انتقال بین کارت‌های خودِ کاربر هم از این مجموع کنار گذاشته می‌شود، چون جابه‌جایی
+    // داخلی پول است نه درآمد/هزینه‌ی واقعی — هماهنگ با همین قانون در بقیه‌ی صفحات
+    val dayTotal = transactions.filter { it.type == TransactionType.INCOME && it.transferGroupId == null }.sumOf { it.amount } -
+            transactions.filter { it.type == TransactionType.EXPENSE && it.transferGroupId == null }.sumOf { it.amount }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        // RIGHT side: dayLabel (امروز / دیروز)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (dayLabel.isNotEmpty()) {
+                Text(
+                    dayLabel,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextPrimary,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = Vazirmatn
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                FlowerDecoration(
+                    modifier = Modifier.size(16.dp),
+                    color = if (dayLabel == "امروز") PrimaryGreen.copy(alpha = 0.3f) else ExpensePurple.copy(alpha = 0.2f)
+                )
+            }
+        }
+        // LEFT side: Date (persian digits)
+        Text(
+            PersianDateUtils.toPersianDigits(date),
+            style = MaterialTheme.typography.bodySmall,
+            color = TextSecondary,
+            fontFamily = Vazirmatn
+        )
+    }
+}
+
+@Composable
+fun TransactionListItem(
+    transaction: Transaction,
+    onClick: () -> Unit
+) {
+    val isIncome = transaction.type == TransactionType.INCOME
+    val amountColor = if (isIncome) IncomeGreen else ExpensePurple
+    val sign = if (isIncome) "+" else ""
+    val minusSuffix = if (isIncome) "" else " -"
+    val iconBg = amountColor.copy(alpha = 0.1f)
+    val categoryIcon = getCategoryIcon(transaction.category)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        // Right side: Icon + Title + Category
+        Row(
+            modifier = Modifier.weight(1f),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(iconBg),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    categoryIcon,
+                    contentDescription = transaction.category,
+                    tint = amountColor,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column {
+                Text(
+                    transaction.title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = TextPrimary,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = Vazirmatn
+                )
+                Text(
+                    transaction.category,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary,
+                    fontFamily = Vazirmatn
+                )
+            }
+        }
+        // Left side: Amount (sign before, minus after for expense)
+        Text(
+            "${sign}${formatPersianAmount(transaction.amount)}${minusSuffix}",
+            style = MaterialTheme.typography.bodyMedium,
+            color = amountColor,
+            fontWeight = FontWeight.Bold,
+            fontFamily = Vazirmatn,
+            textAlign = TextAlign.Left,
+            modifier = Modifier.padding(start = 8.dp)
+        )
+    }
+}
+
+// عنوان دوره را بر اساس بازه‌ی زمانی انتخابی می‌سازد؛ همان واژه‌های «امروز / این هفته /
+// این ماه / امسال» که در بقیه‌ی صفحات (گزارش‌ها، خانه) هم استفاده می‌شوند
+private fun periodTitleSuffix(periodType: PeriodType): String = when (periodType) {
+    PeriodType.DAY -> "امروز"
+    PeriodType.WEEK -> "این هفته"
+    PeriodType.MONTH -> "این ماه"
+    PeriodType.YEAR -> "امسال"
+}
+
+@Composable
+fun PeriodDonutSummaryCard(periodType: PeriodType, filterType: TxnFilter?, income: Long, expense: Long) {
+    val periodSuffix = periodTitleSuffix(periodType)
+    val total = income + expense
+    val title = when (filterType) {
+        TxnFilter.INCOME -> "جمع درآمد $periodSuffix"
+        TxnFilter.EXPENSE -> "جمع هزینه $periodSuffix"
+        TxnFilter.DEBT, TxnFilter.TRANSFER, null -> "جمع درآمد و هزینه $periodSuffix"
+    }
+    // گل هم‌رنگ نتیجه‌ی غالب دوره — سبز اگر درآمد مساوی یا بیشتر از هزینه باشد، وگرنه بنفش؛
+    // دقیقاً همان الگوی رنگ‌بندی FlowerDecoration در تیتر «امروز/دیروز» بالای هر روز
+    val dominantFlowerColor = if (income >= expense) PrimaryGreen.copy(alpha = 0.3f) else ExpensePurple.copy(alpha = 0.2f)
+
+    Column {
+        // عنوان + گل، بیرون از کارت — دقیقاً هم‌سایز و هم‌رنگ با تیتر «امروز» در DateSectionHeader
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                title,
+                style = MaterialTheme.typography.bodySmall,
+                color = TextPrimary,
+                fontWeight = FontWeight.Bold,
+                fontFamily = Vazirmatn
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            FlowerDecoration(
+                modifier = Modifier.size(16.dp),
+                color = dominantFlowerColor
+            )
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = CardWhite),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(18.dp)) {
+            // نقطه‌ی سبز + «درآمد:» + مبلغ، زیرش نقطه‌ی بنفش + «هزینه:» + مبلغ —
+            // دقیقاً همان چیدمان و سبک ویجت «وضعیت طلب و بدهی» در HomeScreen
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(IncomeGreen))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("درآمد:", style = MaterialTheme.typography.labelMedium, color = TextSecondary, fontFamily = Vazirmatn)
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    "${formatPersianAmount(income)} تومان",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = IncomeGreen,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = Vazirmatn
+                )
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(ExpensePurple))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("هزینه:", style = MaterialTheme.typography.labelMedium, color = TextSecondary, fontFamily = Vazirmatn)
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    "${formatPersianAmount(expense)} تومان",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = ExpensePurple,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = Vazirmatn
+                )
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // فیلترهای تک‌نوعی: نسبت ۱ یا ۰ (نوار کاملاً یک‌رنگ). «همه»/«وام»: نسبت واقعی
+            // سهم درآمد از مجموع — همان منطق و همان ابعاد نوار طلب/بدهی (ارتفاع نمایش ۱۶dp،
+            // ضخامت مسیر ۶dp، دایره‌ی نشانگر سفید با حاشیه‌ی رنگی روی نقطه‌ی تقسیم)
+            val incomeFraction = when (filterType) {
+                TxnFilter.INCOME -> 1f
+                TxnFilter.EXPENSE -> 0f
+                TxnFilter.DEBT, TxnFilter.TRANSFER, null -> if (total > 0) income.toFloat() / total else 0.5f
+            }
+            val animatedFractionAnim = remember { Animatable(0f) }
+            LaunchedEffect(incomeFraction) {
+                animatedFractionAnim.snapTo(0f)
+                animatedFractionAnim.animateTo(
+                    incomeFraction,
+                    animationSpec = tween(durationMillis = 700, easing = FastOutSlowInEasing)
+                )
+            }
+            val animatedFraction = animatedFractionAnim.value
+            val dominantColor = if (income >= expense) IncomeGreen else ExpensePurple
+
+            Box(modifier = Modifier.fillMaxWidth().height(16.dp)) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val trackHeight = 6.dp.toPx()
+                    val trackY = size.height / 2 - trackHeight / 2
+                    val cornerRadius = trackHeight / 2
+                    val splitX = size.width * animatedFraction
+
+                    // بخش سبز (درآمد) سمت چپ
+                    drawRoundRect(
+                        color = IncomeGreen,
+                        topLeft = Offset(0f, trackY),
+                        size = Size(splitX.coerceAtLeast(cornerRadius), trackHeight),
+                        cornerRadius = CornerRadius(cornerRadius, cornerRadius)
+                    )
+                    // بخش بنفش (هزینه) سمت راست
+                    drawRoundRect(
+                        color = ExpensePurple,
+                        topLeft = Offset(splitX, trackY),
+                        size = Size((size.width - splitX).coerceAtLeast(cornerRadius), trackHeight),
+                        cornerRadius = CornerRadius(cornerRadius, cornerRadius)
+                    )
+
+                    // دایره‌ی نشانگر روی نقطه‌ی تقسیم
+                    drawCircle(color = Color.White, radius = 7.dp.toPx(), center = Offset(splitX, size.height / 2))
+                    drawCircle(color = dominantColor, radius = 7.dp.toPx(), center = Offset(splitX, size.height / 2), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.8.dp.toPx()))
+                    drawCircle(color = dominantColor, radius = 2.dp.toPx(), center = Offset(splitX, size.height / 2))
+                }
+            }
+        }
+    }
+    }
+}

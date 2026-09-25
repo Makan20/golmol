@@ -1,0 +1,2248 @@
+package com.ordibehesht.finance.ui.screens
+
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.ui.graphics.PathEffect
+import kotlinx.coroutines.delay
+import androidx.compose.animation.Crossfade
+import com.ordibehesht.finance.data.model.Transaction
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.animation.core.keyframes
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.HazeStyle
+import dev.chrisbanes.haze.HazeTint
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.hazeEffect
+import androidx.compose.ui.unit.dp
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.foundation.border
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.drawscope.rotate as rotateCanvas
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.*
+import androidx.compose.material.icons.automirrored.outlined.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathFillType
+import androidx.compose.ui.graphics.PathOperation
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.path
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.NavController
+import androidx.navigation.NavGraph.Companion.findStartDestination
+import com.ordibehesht.finance.data.model.Account
+import com.ordibehesht.finance.data.model.DebtType
+import com.ordibehesht.finance.data.model.TransactionType
+import com.ordibehesht.finance.data.repository.DebtNotificationRepository
+import com.ordibehesht.finance.data.repository.DebtRepository
+import com.ordibehesht.finance.ui.theme.*
+import com.ordibehesht.finance.ui.utils.PersianDateUtils
+import com.ordibehesht.finance.ui.viewmodel.TransactionViewModel
+import java.text.NumberFormat
+import java.util.*
+import kotlin.math.absoluteValue
+import kotlin.math.roundToInt
+
+fun toPersianDigits(input: String): String {
+    val persian = listOf('۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹')
+    return input.map { ch -> if (ch.isDigit()) persian[ch.digitToInt()] else ch }.joinToString("")
+}
+
+fun formatAmount(amount: Long): String {
+    return toPersianDigits(NumberFormat.getInstance(Locale.US).format(amount))
+}
+
+fun formatPersianAmount(amount: Long): String {
+    return if (amount < 0) "‎" + toPersianDigits(NumberFormat.getInstance(Locale.US).format(-amount)) + "-"
+    else "‎" + toPersianDigits(NumberFormat.getInstance(Locale.US).format(amount))
+}
+
+@Composable
+fun HomeScreen(navController: NavController, viewModel: TransactionViewModel) {
+    val scrollState = rememberScrollState()
+    val hazeState = remember { HazeState() }
+    val transactions by viewModel.transactions.collectAsStateWithLifecycle()
+    val accounts by com.ordibehesht.finance.data.repository.AccountRepository.accounts.collectAsStateWithLifecycle()
+    val totalAccountBalance = accounts.sumOf { accountBalance(it, transactions) }
+
+    var selectedPeriod by remember { mutableStateOf(HomePeriod.WEEK) }
+    var periodOffset by remember { mutableStateOf(0) }
+
+    // برای امکان «برگردون» بعد از حذف تراکنش با سوایپ در بخش «تراکنش‌های اخیر» —
+    // یک سوایپ اشتباه نباید بدون هیچ فرصتی برای جبران، تراکنش را برای همیشه از بین ببرد
+    var pendingDelete by remember { mutableStateOf<PendingUndo<com.ordibehesht.finance.data.model.Transaction>?>(null) }
+
+    // فقط از صفحه‌ی اصلی، دکمه‌ی برگشت سیستم به‌جای خروج فوری از اپ، این دیالوگ تأیید را
+    // نشان می‌دهد — چون HomeScreen مقصد شروع (startDestination) گراف ناوبری است، برگشت از
+    // این‌جا یعنی خروج کامل از برنامه. در بقیه‌ی صفحات، دکمه‌ی برگشت طبق رفتار همیشگی‌اش
+    // به صفحه‌ی قبلی برمی‌گردد و این دیالوگ اصلاً نمایش داده نمی‌شود
+    var showExitConfirmDialog by remember { mutableStateOf(false) }
+    val activity = androidx.compose.ui.platform.LocalContext.current as? android.app.Activity
+    androidx.activity.compose.BackHandler(enabled = true) {
+        showExitConfirmDialog = true
+    }
+
+    fun deleteWithUndo(transaction: com.ordibehesht.finance.data.model.Transaction) {
+        viewModel.deleteTransaction(transaction)
+        pendingDelete = PendingUndo(transaction)
+    }
+
+    // با تغییر نوع بازه (روز/هفته/ماه)، ناوبری به بازه‌ی جاری برمی‌گردد تا گیج‌کننده نباشد
+    LaunchedEffect(selectedPeriod) { periodOffset = 0 }
+
+    val periodDates = remember(selectedPeriod, periodOffset) {
+        when (selectedPeriod) {
+            HomePeriod.DAY -> listOf(PersianDateUtils.addDaysToToday(periodOffset))
+            HomePeriod.WEEK -> PersianDateUtils.getWeekDates(periodOffset)
+            HomePeriod.MONTH -> PersianDateUtils.getMonthInfo(periodOffset).dates
+        }
+    }
+    val periodTransactions = remember(transactions, periodDates) {
+        transactions.filter { it.date in periodDates }
+    }
+    // مجموع درآمد/هزینه شامل تراکنش‌های خودکارِ تسویه‌ی بدهی/طلب هم می‌شود — چون آن‌ها
+    // تراکنش مالی واقعی هستند (پول واقعاً از/به کارتی جابه‌جا شده)؛ فقط لحظه‌ی *ثبت* بدهی/طلب
+    // (که هنوز پولی جابه‌جا نشده) در این مجموع حساب نمی‌شود، چون اصلاً تراکنشی برایش ساخته نمی‌شود.
+    // تراکنش‌های انتقال بین کارت‌های خودِ کاربر (transferGroupId != null) هم از این مجموع کنار
+    // گذاشته می‌شوند، چون جابه‌جایی داخلی پول است نه درآمد/هزینه‌ی واقعی — با این‌حال در تاریخچه‌ی
+    // هر کارت و صفحه‌ی تراکنش‌ها دیده می‌شوند، فقط از این آمار کلی حذف‌اند
+    val totalIncome = periodTransactions.filter { it.type == TransactionType.INCOME && it.transferGroupId == null }.sumOf { it.amount }
+    val totalExpense = periodTransactions.filter { it.type == TransactionType.EXPENSE && it.transferGroupId == null }.sumOf { it.amount }
+
+    val debts by DebtRepository.debts.collectAsStateWithLifecycle()
+    val openDebts = debts.filter { !it.isSettled }
+    val periodOpenDebts = openDebts.filter { debt ->
+        debt.dueDate.isBlank() || debt.dueDate in periodDates || (PersianDateUtils.daysUntil(debt.dueDate) ?: -1) < 0
+    }
+    val totalDebtOwed = periodOpenDebts.filter { it.type == DebtType.PAYABLE }.sumOf { it.remainingAmount }
+    val totalDebtReceivable = periodOpenDebts.filter { it.type == DebtType.RECEIVABLE }.sumOf { it.remainingAmount }
+
+    // برای وام‌های قسطی، فقط اولین قسط تسویه‌نشده‌ی هر وام قابل‌اقدام است (به‌خاطر ترتیب اجباری پرداخت)
+    val (loanDebts, regularOpenDebts) = openDebts.partition { it.loanGroupId != null }
+    val nextActionableInstallments = loanDebts
+        .groupBy { it.loanGroupId }
+        .mapNotNull { (_, installments) ->
+            installments.sortedBy { it.installmentNumber ?: 0 }.firstOrNull()
+        }
+    val actionableDebts = regularOpenDebts + nextActionableInstallments
+
+    val dueSoonCount = actionableDebts.count { debt ->
+        debt.dueDate.takeIf { it.isNotBlank() }?.let { date ->
+            val diff = PersianDateUtils.daysUntil(date)
+            diff != null && diff in 0..7
+        } == true
+    }
+
+    Scaffold(
+        topBar = { TopBarSection(navController) },
+        containerColor = BackgroundLight
+    ) { padding ->
+        Box(modifier = Modifier.fillMaxSize()) {
+            FlowerDecoration(modifier = Modifier.align(Alignment.TopEnd).padding(top = 115.dp, end = 4.dp).size(60.dp))
+            FlowerDecoration(modifier = Modifier.align(Alignment.BottomStart).padding(bottom = 100.dp, start = 4.dp).size(50.dp), color = ExpensePurple.copy(alpha = 0.08f))
+            CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Rtl) {
+                Column(
+                    modifier = Modifier.fillMaxSize().verticalScroll(scrollState).hazeSource(state = hazeState).padding(padding).padding(horizontal = 16.dp)
+                ) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    GreetingSection()
+                    Spacer(modifier = Modifier.height(16.dp))
+                    BalanceCard(totalAccountBalance, accounts.isEmpty(), navController)
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                                        PeriodHubCard(
+                        period = selectedPeriod,
+                        onPeriodSelect = { selectedPeriod = it },
+                        offset = periodOffset,
+                        onPrevious = { periodOffset -= 1 },
+                        onNext = { if (periodOffset < 0) periodOffset += 1 },
+                        periodDates = periodDates,
+                        transactions = transactions
+                    )
+
+                    if (periodOpenDebts.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        DebtBalanceWidget(
+                            totalDebtOwed = totalDebtOwed,
+                            totalDebtReceivable = totalDebtReceivable,
+                            onClick = { navController.navigate("debts") { launchSingleTop = true } }
+                        )
+                    }
+
+                    if (dueSoonCount > 0) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        DebtDueSoonCard(
+                            count = dueSoonCount,
+                            onClick = { navController.navigate("debts") { launchSingleTop = true } }
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(20.dp))
+
+                    // معیار تفکیک، خود پیوند واقعی (debtId) است، نه دسته‌بندی متنی —
+                    // چون کاربر می‌تواند دسته‌ی «بدهی»/«طلب» را روی یک تراکنش عادی هم بگذارد
+                    val regularTransactions = transactions.filter { it.debtId == null }
+                    val debtTransactions = transactions.filter { it.debtId != null }
+
+                    RecentTransactions(regularTransactions, accounts, viewModel, navController, onDelete = { transaction -> deleteWithUndo(transaction) })
+
+                    if (debtTransactions.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(20.dp))
+                        RecentDebtTransactions(debtTransactions, accounts, viewModel, navController)
+                    }
+
+                    Spacer(modifier = Modifier.height(130.dp))
+                }
+            }
+            Box(
+    modifier = Modifier
+        .align(Alignment.BottomCenter)
+        .fillMaxWidth()
+        .height(55.dp)
+        .hazeEffect(
+            state = hazeState,
+            style = HazeStyle(
+                tint = HazeTint(CardWhite.copy(alpha = 0f)),
+                blurRadius = 9.dp
+            )
+        )
+)
+Box(modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 16.dp, vertical = 16.dp)) {
+    BottomNavBar(navController, currentRoute = "home", isScrolling = scrollState.isScrollInProgress)
+}
+// این عمداً بعد از BottomNavBar (که خودش شامل FAB شناور است) نوشته شده تا در
+// ترتیب رندر Compose روی آن قرار بگیرد — وگرنه FAB و نوار پایین بخشی از نوار
+// Undo را می‌پوشانند و دکمه‌ی «برگردون» غیرقابل‌کلیک می‌شود.
+// فاصله‌ی ۱۱۲dp از پایین = ۱۶dp (padding پایین BottomNavBar) + ۹۶dp (ارتفاع کامل
+// BottomNavBar شامل فضای بیرون‌زدگی FAB) — تا نوار Undo کاملاً بالای نوک FAB بنشیند
+UndoDeleteSnackbar(
+    pending = pendingDelete,
+    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 112.dp),
+    onExpired = { pendingDelete = null },
+    onUndo = { transaction ->
+        // id صفر می‌شود تا Room برای رکورد بازگردانده‌شده یک id جدید تولید کند —
+        // چون id قبلی دیگر در جدول وجود ندارد و منطقاً هم نیازی به همان id نیست
+        viewModel.addTransaction(transaction.copy(id = 0))
+        pendingDelete = null
+    }
+)
+        }
+    }
+
+    if (showExitConfirmDialog) {
+        ExitConfirmDialog(
+            onConfirm = {
+                showExitConfirmDialog = false
+                activity?.finish()
+            },
+            onDismiss = { showExitConfirmDialog = false }
+        )
+    }
+}
+
+/**
+ * دیالوگ تأیید خروج از برنامه — فقط از دکمه‌ی برگشت سیستم در HomeScreen نمایش داده می‌شود
+ * (چون این صفحه مقصد شروع گراف ناوبری است و برگشت از این‌جا یعنی خروج کامل از اپ). طراحی
+ * دقیقاً هم‌سطح بقیه‌ی دیالوگ‌های تأیید اپ (حذف مورد، بازگردانی بکاپ): AlertDialog با
+ * containerColor سفید، فونت Vazirmatn، و رنگ‌بندی سبز/بنفش خودمان.
+ */
+@Composable
+private fun ExitConfirmDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    androidx.compose.runtime.CompositionLocalProvider(
+        androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Rtl
+    ) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            containerColor = CardWhite,
+            shape = RoundedCornerShape(24.dp),
+            icon = {
+                Box(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .clip(CircleShape)
+                        .background(LightGreen),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Outlined.Logout,
+                        contentDescription = null,
+                        tint = PrimaryGreen,
+                        // آیکون Logout به‌خاطر فلش نامتقارنش (که در حالت RTL هم mirror می‌شود)
+                        // با اندازه‌ی پیش‌فرض کمی از مرکز واقعی گلیف به چپ متمایل به‌نظر
+                        // می‌رسد؛ این افست کوچک آن را واقعاً در مرکز دایره قرار می‌دهد
+                        modifier = Modifier
+                            .size(30.dp)
+                            .offset(x = 2.dp)
+                    )
+                }
+            },
+            title = {
+                Text(
+                    "آیا می‌خواهید خارج شوید؟",
+                    fontFamily = Vazirmatn,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    color = TextPrimary,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            text = {
+                Text(
+                    "با تأیید این گزینه، از برنامه خارج می‌شوید.",
+                    fontFamily = Vazirmatn,
+                    fontSize = 13.sp,
+                    color = TextSecondary,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = onConfirm,
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = ExpensePurple)
+                ) {
+                    Text("خارج شدن", fontFamily = Vazirmatn, fontWeight = FontWeight.Bold, color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth().height(48.dp)
+                ) {
+                    Text("انصراف", fontFamily = Vazirmatn, fontWeight = FontWeight.Bold, color = PrimaryGreen)
+                }
+            }
+        )
+    }
+}
+
+@Composable
+fun FlowerDecoration(modifier: Modifier = Modifier, color: Color = ExpensePurple.copy(alpha = 0.10f)) {
+    Canvas(modifier = modifier) {
+        val center = Offset(size.width / 2, size.height / 2)
+        val petalRadius = size.width * 0.18f
+        val centerRadius = size.width * 0.12f
+        for (i in 0 until 6) {
+            val angle = i * 60f * (Math.PI / 180f).toFloat()
+            val petalCenter = Offset(center.x + kotlin.math.cos(angle) * centerRadius * 1.2f, center.y + kotlin.math.sin(angle) * centerRadius * 1.2f)
+            drawCircle(color = color, radius = petalRadius, center = petalCenter)
+        }
+        drawCircle(color = color.copy(alpha = 0.5f), radius = centerRadius * 0.6f, center = center)
+    }
+}
+
+@Composable
+fun FabFlowerIcon(modifier: Modifier = Modifier, color: Color = Color.White) {
+    Canvas(modifier = modifier) {
+        val center = Offset(size.width / 2, size.height / 2)
+        val petalLength = size.width * 0.40f
+        val petalWidth = size.width * 0.22f
+        val petalDistance = size.width * 0.24f
+        val petalCount = 5
+
+        for (i in 0 until petalCount) {
+            val angleDeg = i * (360f / petalCount)
+            rotateCanvas(degrees = angleDeg, pivot = center) {
+                val petalCenter = Offset(center.x, center.y - petalDistance)
+                drawOval(
+                    color = color,
+                    topLeft = Offset(petalCenter.x - petalWidth / 2, petalCenter.y - petalLength / 2),
+                    size = Size(petalWidth, petalLength)
+                )
+            }
+        }
+        drawCircle(color = color.copy(alpha = (color.alpha + 0.15f).coerceAtMost(1f)), radius = size.width * 0.09f, center = center)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TopBarSection(navController: NavController) {
+    val notifications by DebtNotificationRepository.notifications.collectAsStateWithLifecycle()
+    val hasUnreadNotifications = notifications.any { !it.isRead }
+
+    TopAppBar(
+        title = { },
+        navigationIcon = {
+            Icon(Icons.Outlined.Eco, "Logo", tint = PrimaryGreen, modifier = Modifier.padding(start = 16.dp).size(28.dp))
+        },
+        actions = {
+            IconButton(onClick = { navController.navigate("notifications") }) {
+                Box {
+                    Icon(Icons.Outlined.Notifications, "اعلان‌ها", tint = TextPrimary)
+                    if (hasUnreadNotifications) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(ExpensePurple)
+                                .border(1.dp, BackgroundLight, CircleShape)
+                        )
+                    }
+                }
+            }
+        },
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = BackgroundLight)
+    )
+}
+
+@Composable
+fun GreetingSection() {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+        Text("سلام اردیبهشت جان", style = MaterialTheme.typography.headlineMedium, color = TextPrimary, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+        Text("خوش اومدی، روزت قشنگ", style = MaterialTheme.typography.labelMedium, color = TextSecondary, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 4.dp))
+    }
+}
+
+@Composable
+fun BalanceCard(balance: Long, noAccountsYet: Boolean, navController: NavController) {
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = CardWhite)) {
+        Box(modifier = Modifier.fillMaxWidth()) {
+            if (noAccountsYet) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(LightGreen.copy(alpha = 0.5f))
+                        .clickable { navController.navigate("cards") }
+                        .padding(horizontal = 16.dp, vertical = 18.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        "هنوز کارتی نساختی — اول یکی بساز",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = PrimaryGreen,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = Vazirmatn
+                    )
+                    Icon(Icons.Outlined.Add, null, tint = PrimaryGreen)
+                }
+            } else {
+                Column(modifier = Modifier.padding(20.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(modifier = Modifier.size(32.dp).clip(CircleShape).background(LightGreen), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Outlined.AccountBalanceWallet, null, tint = PrimaryGreen, modifier = Modifier.size(18.dp))
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text("موجودی کل", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
+                        Spacer(modifier = Modifier.weight(1f))
+                        // فلشِ ناوبری به صفحه‌ی کارت‌های من — هم‌سایز، هم‌رنگ و هم‌رفتار با
+                        // فلش‌های ناوبری دوره. absoluteOffset ۸dp به چپ چون این کارت
+                        // padding بیرونی ۲۰dp دارد (کارت ناوبری دوره ۱۲dp)، و بدون این جبران
+                        // دو فلش هم‌راستا نمی‌شدند
+                        IconButton(
+                            onClick = { navController.navigate("cards") },
+                            modifier = Modifier.absoluteOffset(x = (-8).dp)
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Outlined.ArrowForwardIos,
+                                contentDescription = "رفتن به کارت‌های من",
+                                tint = TextSecondary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Ltr) {
+                        Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.Start) {
+                            Text("‎" + formatAmount(balance), style = MaterialTheme.typography.headlineMedium.copy(fontSize = 28.sp), color = TextPrimary, fontWeight = FontWeight.Bold)
+                            Text("تومان", style = MaterialTheme.typography.labelMedium, color = TextSecondary)
+                        }
+                    }
+                }
+                FlowerDecoration(modifier = Modifier.align(Alignment.BottomStart).padding(bottom = 14.dp, start = 16.dp).size(48.dp), color = ExpensePurple.copy(alpha = 0.12f))
+            }
+        }
+    }
+}
+
+@Composable
+fun StatsRow(totalIncome: Long, totalExpense: Long) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        StatCard("درآمد", totalIncome, Icons.Outlined.AddCard, Color(0xFFE8F5E9), IncomeGreen, Modifier.weight(1f))
+        StatCard("هزینه", totalExpense, Icons.Outlined.Wallet, Color(0xFFF3E5F5), ExpensePurple, Modifier.weight(1f))
+    }
+}
+
+@Composable
+fun StatCard(title: String, amount: Long, icon: androidx.compose.ui.graphics.vector.ImageVector, iconBg: Color, iconTint: Color, modifier: Modifier = Modifier) {
+    Card(modifier = modifier, shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = CardWhite)) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(modifier = Modifier.size(32.dp).clip(CircleShape).background(iconBg), contentAlignment = Alignment.Center) {
+                    Icon(icon, null, tint = iconTint, modifier = Modifier.size(18.dp))
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(title, style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Ltr) {
+                Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.Start) {
+                    Text("‎" + formatAmount(amount), style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp), color = TextPrimary, fontWeight = FontWeight.Bold)
+                    Text("تومان", style = MaterialTheme.typography.labelMedium, color = TextSecondary)
+                }
+            }
+        }
+    }
+}
+
+// ویجت واحد وضعیت مالی (طلب/بدهی): یک اسلایدر افقی نازک سبز-به-بنفش که نسبت طلب به بدهی را
+// نشان می‌دهد، با مبلغ هر بخش (زیر عنوان)، درصد هر بخش، و خالص حساب پایین.
+// کل ویجت کلیک‌پذیر است و به صفحه‌ی لیست بدهی‌ها می‌برد.
+@Composable
+fun DebtBalanceWidget(totalDebtOwed: Long, totalDebtReceivable: Long, onClick: () -> Unit) {
+    val total = totalDebtOwed + totalDebtReceivable
+    // وقتی هر دو صفر باشند (که عملاً این ویجت اصلاً رندر نمی‌شود، چون صدازننده isNotEmpty چک می‌کند)
+    // یک نسبت ۵۰-۵۰ خنثی به‌عنوان fallback در نظر گرفته می‌شود تا تقسیم بر صفر رخ ندهد
+    val receivableFraction = if (total > 0L) totalDebtReceivable.toFloat() / total.toFloat() else 0.5f
+    val receivablePercent = (receivableFraction * 100).roundToInt()
+    val owedPercent = 100 - receivablePercent
+    val netBalance = totalDebtReceivable - totalDebtOwed
+
+    // بر خلاف animateFloatAsState (که فقط وقتی مقدار receivableFraction عوض شود انیمیشن
+    // می‌زند)، اینجا از Animatable + LaunchedEffect استفاده می‌کنیم تا هر بار این ویجت
+    // وارد ترکیب می‌شود (یعنی هر بار کاربر به HomeScreen می‌آید)، اسلایدر از صفر شروع کند
+    // و به مقدار واقعی برسد — همان الگوی افکت ورودیِ نمودار میله‌ای هفتگی. چون ناوبری تب
+    // پایین با saveState/restoreState کار می‌کند، این Composable با هر ورود دوباره از نو
+    // ترکیب می‌شود، remember{Animatable(0f)} دوباره صفر می‌شود و LaunchedEffect دوباره
+    // اجرا می‌شود؛ کلید receivableFraction هم تضمین می‌کند اگر مقدار طلب/بدهی در همان
+    // نشست تغییر کند (بدون خروج از صفحه)، انیمیشن باز هم درست اجرا شود
+    val animatedFractionAnim = remember { Animatable(0f) }
+    LaunchedEffect(receivableFraction) {
+        animatedFractionAnim.snapTo(0f)
+        animatedFractionAnim.animateTo(
+            receivableFraction,
+            animationSpec = tween(durationMillis = 700, easing = FastOutSlowInEasing)
+        )
+    }
+    val animatedFraction = animatedFractionAnim.value
+
+    Column {
+        CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Rtl) {
+            Row(
+                modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("وضعیت طلب و بدهی", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
+                Text("مشاهده همه", style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp), color = PrimaryGreen)
+            }
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = CardWhite),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(14.dp)
+        ) {
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // نقطه‌ی سبز + مبلغ طلب، زیرش نقطه‌ی بنفش + مبلغ بدهی — به‌جای نوشتن مبلغ
+            // روی خود نمودار، که هم کارت را بزرگ می‌کرد هم نمودار را ضخیم نگه می‌داشت
+            CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Rtl) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(IncomeGreen))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("طلب من:", style = MaterialTheme.typography.labelMedium, color = TextSecondary, fontFamily = Vazirmatn)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        "${formatAmount(totalDebtReceivable)} تومان",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = IncomeGreen,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = Vazirmatn
+                    )
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(ExpensePurple))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("بدهی من:", style = MaterialTheme.typography.labelMedium, color = TextSecondary, fontFamily = Vazirmatn)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        "${formatAmount(totalDebtOwed)} تومان",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = ExpensePurple,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = Vazirmatn
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // خودِ اسلایدر: یک نوار نازک سبز-به-بنفش با دایره‌ی نشانگر روی مرز.
+            // رنگ دایره پویاست: وقتی طلب بیشتر از بدهی است سبز، وگرنه بنفش —
+            // یک نگاه سریع به وضعیت غالب، بدون نیاز به خواندن اعداد
+            val dominantColor = if (totalDebtReceivable >= totalDebtOwed) IncomeGreen else ExpensePurple
+            Box(modifier = Modifier.fillMaxWidth().height(16.dp)) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val trackHeight = 6.dp.toPx()
+                    val trackY = size.height / 2 - trackHeight / 2
+                    val cornerRadius = trackHeight / 2
+                    val splitX = size.width * animatedFraction
+
+                    // بخش سبز (طلب) سمت چپ (LTR: چون این بخش کاملاً مستقل از جهت متن است)
+                    drawRoundRect(
+                        color = IncomeGreen,
+                        topLeft = Offset(0f, trackY),
+                        size = Size(splitX.coerceAtLeast(cornerRadius), trackHeight),
+                        cornerRadius = CornerRadius(cornerRadius, cornerRadius)
+                    )
+                    // بخش بنفش (بدهی) سمت راست
+                    drawRoundRect(
+                        color = ExpensePurple,
+                        topLeft = Offset(splitX, trackY),
+                        size = Size((size.width - splitX).coerceAtLeast(cornerRadius), trackHeight),
+                        cornerRadius = CornerRadius(cornerRadius, cornerRadius)
+                    )
+
+                    // دایره‌ی نشانگر روی نقطه‌ی تقسیم
+                    drawCircle(color = Color.White, radius = 7.dp.toPx(), center = Offset(splitX, size.height / 2))
+                    drawCircle(color = dominantColor, radius = 7.dp.toPx(), center = Offset(splitX, size.height / 2), style = Stroke(width = 1.8.dp.toPx()))
+                    drawCircle(color = dominantColor, radius = 2.dp.toPx(), center = Offset(splitX, size.height / 2))
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // برچسب‌های ۰٪ ۵۰٪ ۱۰۰٪ زیر اسلایدر
+            CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Ltr) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("۰%", style = MaterialTheme.typography.labelSmall, color = TextTertiary, fontFamily = Vazirmatn, fontSize = 10.sp)
+                    Text("۵۰%", style = MaterialTheme.typography.labelSmall, color = TextTertiary, fontFamily = Vazirmatn, fontSize = 10.sp)
+                    Text("۱۰۰%", style = MaterialTheme.typography.labelSmall, color = TextTertiary, fontFamily = Vazirmatn, fontSize = 10.sp)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // ردیف پایین: درصد بدهی (راست) — خالص حساب (وسط) — درصد طلب (چپ)
+            // به‌جای بلوک جداگانه‌ی درصد بالای نمودار (که حذف شد)، همین یک ردیف هم
+            // خالص حساب هم درصدهای طلب/بدهی را با هم نشان می‌دهد — کارت خلوت‌تر و کوچک‌تر می‌ماند
+            CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Rtl) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // درصد بدهی — فلش نزولی، چون بدهی بیشتر نامطلوب است.
+                    // رنگ خاکستری کم‌رنگ (TextTertiary) و فونت کوچک عمداً انتخاب شده تا این
+                    // ردیف کمکی، در مقایسه با مبلغ‌های اصلی بالای نمودار، کمتر در چشم بیاید
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.AutoMirrored.Outlined.TrendingDown,
+                            contentDescription = null,
+                            tint = TextTertiary,
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Spacer(modifier = Modifier.width(2.dp))
+                        Text(
+                            PersianDateUtils.toPersianDigits("$owedPercent% بدهی"),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = TextTertiary,
+                            fontFamily = Vazirmatn,
+                            fontSize = 9.sp,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
+
+                    // خالص حساب — علامت + یا - بعد از مبلغ (پشتِ عدد) قرار می‌گیرد، به‌صورت
+                    // یک Text کاملاً مستقل با جهت LTR صریح رندر می‌شود (نه چسبیده به رشته‌ی
+                    // مبلغ، و نه وارث جهت RTL محیط اطرافش). ترتیب در کد باید همان ترتیب نمایش
+                    // نهایی باشد (مبلغ، سپس علامت) چون Row زیر جهت RTL است و اولین فرزند در کد
+                    // راست‌ترین جای صفحه می‌افتد. اگر علامت داخل رشته‌ی متن با ارقام فارسی ترکیب
+                    // شود، یا حتی به‌عنوان یک Text مجزا اما هنوز زیر LayoutDirection.Rtl رندر شود،
+                    // الگوریتم Bidi یونیکد می‌تواند این علامت را نامرئی یا جابه‌جا کند — این مشکل
+                    // فقط با یک بلوک LTR صریح و مجزا برای خودِ علامت به‌طور کامل برطرف می‌شود
+                    val netColor = if (netBalance >= 0) IncomeGreen else ExpensePurple
+                    val sign = if (netBalance >= 0) "+" else "-"
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "خالص حساب من : ",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = TextSecondary,
+                            fontFamily = Vazirmatn,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                        Text(
+                            formatAmount(kotlin.math.abs(netBalance)),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = netColor,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = Vazirmatn,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                        CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Ltr) {
+                            Text(
+                                sign,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = netColor,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+                        Text(
+                            " تومان",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = TextSecondary,
+                            fontFamily = Vazirmatn,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
+
+                    // درصد طلب — فلش صعودی، چون طلب بیشتر مطلوب است.
+                    // همان رنگ و سایز کم‌رنگ سمت بدهی، برای تقارن بصری دو طرف
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            PersianDateUtils.toPersianDigits("$receivablePercent% طلب"),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = TextTertiary,
+                            fontFamily = Vazirmatn,
+                            fontSize = 9.sp,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                        Spacer(modifier = Modifier.width(2.dp))
+                        Icon(
+                            Icons.AutoMirrored.Outlined.TrendingUp,
+                            contentDescription = null,
+                            tint = TextTertiary,
+                            modifier = Modifier.size(12.dp)
+                        )
+                    }
+                }
+            }
+        }
+        }
+    }
+}
+
+@Composable
+fun DebtDueSoonCard(count: Int, onClick: () -> Unit) {
+    // افکت: تیک‌تاک ساعت که کامل یک دور (۳۶۰ درجه) می‌زند - نسخه آرام‌تر (۲ برابر کندتر)
+    val infiniteTransition = rememberInfiniteTransition(label = "tick")
+    val tickRotation by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = keyframes {
+                durationMillis = 7200
+                0f at 0
+                0f at 800
+                60f at 1100 using FastOutSlowInEasing
+                60f at 1900
+                120f at 2200 using FastOutSlowInEasing
+                120f at 3000
+                180f at 3300 using FastOutSlowInEasing
+                180f at 4100
+                240f at 4400 using FastOutSlowInEasing
+                240f at 5200
+                300f at 5500 using FastOutSlowInEasing
+                300f at 6300
+                360f at 6600 using FastOutSlowInEasing
+                360f at 7200
+            },
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "tickRotation"
+    )
+
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = CardWhite)
+    ) {
+        Row(
+            modifier = Modifier.padding(14.dp).fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .background(ExpensePurple.copy(alpha = 0.16f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Outlined.Schedule,
+                    contentDescription = null,
+                    tint = ExpensePurple,
+                    modifier = Modifier
+                        .size(14.dp)
+                        .rotate(tickRotation)
+                )
+            }
+            Spacer(modifier = Modifier.width(10.dp))
+            Text(
+                "$count مورد طلب/بدهی به سررسید نزدیک شده",
+                style = MaterialTheme.typography.bodyMedium,
+                color = TextPrimary,
+                fontFamily = Vazirmatn,
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+enum class HomePeriod { DAY, WEEK, MONTH }
+
+@Composable
+fun PeriodToggle(selected: HomePeriod, onSelect: (HomePeriod) -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = BackgroundLight)
+    ) {
+        Row(modifier = Modifier.fillMaxWidth().padding(5.dp)) {
+            PeriodToggleButton("روز", selected == HomePeriod.DAY, Modifier.weight(1f)) { onSelect(HomePeriod.DAY) }
+            PeriodToggleButton("هفته", selected == HomePeriod.WEEK, Modifier.weight(1f)) { onSelect(HomePeriod.WEEK) }
+            PeriodToggleButton("ماه", selected == HomePeriod.MONTH, Modifier.weight(1f)) { onSelect(HomePeriod.MONTH) }
+        }
+    }
+}
+
+@Composable
+private fun PeriodToggleButton(label: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    val backgroundColor by animateColorAsState(
+        targetValue = if (selected) LightGreen else LightGreen.copy(alpha = 0f),
+        label = "periodToggleBg"
+    )
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(backgroundColor)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            )
+            .padding(vertical = 9.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (selected) PrimaryGreen else TextSecondary,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            fontFamily = Vazirmatn
+        )
+    }
+}
+@Composable
+fun PeriodNavigator(
+    period: HomePeriod,
+    offset: Int,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit
+) {
+    val label = remember(period, offset) { periodLabel(period, offset) }
+    val isAtPresent = offset == 0
+
+    CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Rtl) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // دکمه سمت راست: رفتن به آینده — فلش رو به بیرون
+            IconButton(onClick = onNext, enabled = !isAtPresent) {
+                Icon(
+                    Icons.AutoMirrored.Outlined.ArrowBackIos,
+                    contentDescription = "بعدی",
+                    tint = if (isAtPresent) TextTertiary.copy(alpha = 0.4f) else TextSecondary,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+            Text(
+                label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = TextPrimary,
+                fontWeight = FontWeight.Bold,
+                fontFamily = Vazirmatn
+            )
+            // دکمه سمت چپ: رفتن به گذشته — فلش رو به بیرون
+            IconButton(onClick = onPrevious) {
+                Icon(
+                    Icons.AutoMirrored.Outlined.ArrowForwardIos,
+                    contentDescription = "قبلی",
+                    tint = TextSecondary,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        }
+    }
+}
+
+private fun periodLabel(period: HomePeriod, offset: Int): String {
+    return when (period) {
+        HomePeriod.DAY -> {
+            val date = PersianDateUtils.addDaysToToday(offset)
+            when (offset) {
+                0 -> "امروز"
+                -1 -> "دیروز"
+                else -> PersianDateUtils.toPersianDigits(date)
+            }
+        }
+        HomePeriod.WEEK -> {
+            val dates = PersianDateUtils.getWeekDates(offset)
+            val first = dates.first().split("/")
+            val last = dates.last().split("/")
+            if (offset == 0) {
+                "این هفته"
+            } else {
+                "${PersianDateUtils.toPersianDigits(first[2])} تا ${PersianDateUtils.toPersianDigits(last[2])} ${persianMonthName(last[1].toInt())}"
+            }
+        }
+        HomePeriod.MONTH -> {
+            val info = PersianDateUtils.getMonthInfo(offset)
+            if (offset == 0) {
+                "این ماه"
+            } else {
+                "${persianMonthName(info.month)} ${PersianDateUtils.toPersianDigits(info.year.toString())}"
+            }
+        }
+    }
+}
+
+private fun persianMonthName(month: Int): String {
+    val names = listOf(
+        "فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور",
+        "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"
+    )
+    return names.getOrElse(month - 1) { "" }
+}
+@Composable
+fun PeriodHubCard(
+    period: HomePeriod,
+    onPeriodSelect: (HomePeriod) -> Unit,
+    offset: Int,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    periodDates: List<String>,
+    transactions: List<com.ordibehesht.finance.data.model.Transaction>
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = CardWhite)
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            PeriodToggle(selected = period, onSelect = onPeriodSelect)
+            Spacer(modifier = Modifier.height(6.dp))
+            PeriodNavigator(period = period, offset = offset, onPrevious = onPrevious, onNext = onNext)
+            Spacer(modifier = Modifier.height(4.dp))
+            PeriodChartSection(period = period, periodDates = periodDates, transactions = transactions, compact = true)
+        }
+    }
+}
+@Composable
+fun PeriodChartSection(
+    period: HomePeriod,
+    periodDates: List<String>,
+    transactions: List<com.ordibehesht.finance.data.model.Transaction>,
+    compact: Boolean = false
+) {
+    // نمودار و مجموع‌ها شامل تراکنش‌های خودکارِ تسویه‌ی بدهی/طلب هم می‌شوند —
+    // چون این‌ها تراکنش مالی واقعی‌اند (پول واقعاً جابه‌جا شده). اما تراکنش‌های انتقال بین
+    // کارت‌های خودِ کاربر (transferGroupId != null) از این نمودار و مجموع‌ها کنار گذاشته
+    // می‌شوند، چون جابه‌جایی داخلی پول‌اند نه درآمد/هزینه‌ی واقعی — هماهنگ با totalIncome/
+    // totalExpense در بالای همین صفحه
+    val periodTransactions = remember(transactions, periodDates) {
+        transactions.filter { it.date in periodDates && it.transferGroupId == null }
+    }
+    val totalPeriodIncome = periodTransactions.filter { it.type == TransactionType.INCOME }.sumOf { it.amount }
+    val totalPeriodExpense = periodTransactions.filter { it.type == TransactionType.EXPENSE }.sumOf { it.amount }
+
+    val chartTitle = when (period) {
+        HomePeriod.DAY -> "نمودار روز"
+        HomePeriod.WEEK -> "نمودار هفتگی"
+        HomePeriod.MONTH -> "نمودار ماهانه"
+    }
+
+    var selectedIndex by remember(periodDates) { mutableStateOf<Int?>(null) }
+
+    val labels: List<String>
+    val incomeByBucket: List<Long>
+    val expenseByBucket: List<Long>
+
+    if (period == HomePeriod.DAY) {
+        labels = (0..7).map { b ->
+            PersianDateUtils.toPersianDigits(String.format("%02d تا %02d", b * 3, b * 3 + 3))
+        }
+        incomeByBucket = (0..7).map { b ->
+            periodTransactions.filter {
+                it.type == TransactionType.INCOME &&
+                    ((it.time.split(":").firstOrNull()?.toIntOrNull() ?: 12) / 3) == b
+            }.sumOf { it.amount }
+        }
+        expenseByBucket = (0..7).map { b ->
+            periodTransactions.filter {
+                it.type == TransactionType.EXPENSE &&
+                    ((it.time.split(":").firstOrNull()?.toIntOrNull() ?: 12) / 3) == b
+            }.sumOf { it.amount }
+        }
+    } else if (period == HomePeriod.WEEK) {
+        labels = PersianDateUtils.getWeekDays()
+        incomeByBucket = periodDates.map { date -> periodTransactions.filter { it.type == TransactionType.INCOME && it.date == date }.sumOf { it.amount } }
+        expenseByBucket = periodDates.map { date -> periodTransactions.filter { it.type == TransactionType.EXPENSE && it.date == date }.sumOf { it.amount } }
+    } else {
+        val weeksInMonth = periodDates.chunked(7)
+        labels = weeksInMonth.map { week ->
+            val firstDay = week.first().split("/").last().toIntOrNull() ?: 0
+            val lastDay = week.last().split("/").last().toIntOrNull() ?: 0
+            PersianDateUtils.toPersianDigits("$firstDay-$lastDay")
+        }
+        incomeByBucket = weeksInMonth.map { week -> periodTransactions.filter { it.type == TransactionType.INCOME && it.date in week }.sumOf { it.amount } }
+        expenseByBucket = weeksInMonth.map { week -> periodTransactions.filter { it.type == TransactionType.EXPENSE && it.date in week }.sumOf { it.amount } }
+    }
+
+    val maxValue = remember(incomeByBucket, expenseByBucket) {
+        val max = (incomeByBucket + expenseByBucket).maxOrNull() ?: 0L
+        if (max > 0) max else 1
+    }
+
+    val chipIncome = selectedIndex?.let { incomeByBucket.getOrNull(it) } ?: totalPeriodIncome
+    val chipExpense = selectedIndex?.let { expenseByBucket.getOrNull(it) } ?: totalPeriodExpense
+
+    val animatedChipIncome by animateFloatAsState(
+        targetValue = chipIncome.toFloat(),
+        animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing),
+        label = "chipIncomeAnim"
+    )
+    val displayChipIncome = if (animatedChipIncome == chipIncome.toFloat()) chipIncome else animatedChipIncome.toLong()
+    val animatedChipExpense by animateFloatAsState(
+        targetValue = chipExpense.toFloat(),
+        animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing),
+        label = "chipExpenseAnim"
+    )
+    val displayChipExpense = if (animatedChipExpense == chipExpense.toFloat()) chipExpense else animatedChipExpense.toLong()
+
+    Column {
+        if (!compact) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(chartTitle, style = MaterialTheme.typography.titleMedium, color = TextPrimary)
+                Row {
+                    ChartLegend("درآمد", IncomeGreen)
+                    Spacer(modifier = Modifier.width(12.dp))
+                    ChartLegend("هزینه", ExpensePurple)
+                }
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+        }
+
+        CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Rtl) {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                AnimatedVisibility(visible = selectedIndex != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(TextPrimary.copy(alpha = 0.88f))
+                                .clickable { selectedIndex = null }
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                (labels.getOrNull(selectedIndex ?: -1) ?: "") + "  ✕",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.White,
+                                fontFamily = Vazirmatn,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+                }
+
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(IncomeGreen.copy(alpha = 0.08f))
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            FlowerDecoration(modifier = Modifier.size(15.dp), color = IncomeGreen.copy(alpha = 0.45f))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("درآمد", style = MaterialTheme.typography.labelSmall, color = TextSecondary, fontFamily = Vazirmatn)
+                        }
+                        Text(formatPersianAmount(displayChipIncome), style = MaterialTheme.typography.labelMedium, color = IncomeGreen, fontFamily = Vazirmatn, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(10.dp))
+
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(ExpensePurple.copy(alpha = 0.08f))
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            FlowerDecoration(modifier = Modifier.size(15.dp), color = ExpensePurple.copy(alpha = 0.45f))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("هزینه", style = MaterialTheme.typography.labelSmall, color = TextSecondary, fontFamily = Vazirmatn)
+                        }
+                        Text(formatPersianAmount(displayChipExpense), style = MaterialTheme.typography.labelMedium, color = ExpensePurple, fontFamily = Vazirmatn, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Card(
+            modifier = Modifier.fillMaxWidth().height(if (compact) 190.dp else 240.dp),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = if (compact) Color.Transparent else CardWhite),
+            elevation = CardDefaults.cardElevation(defaultElevation = if (compact) 0.dp else 1.dp)
+        ) {
+            if (periodTransactions.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        FlowerDecoration(
+                            modifier = Modifier.size(52.dp),
+                            color = ExpensePurple.copy(alpha = 0.14f)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "تراکنشی در این بازه ثبت نشده",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = TextSecondary,
+                            fontFamily = Vazirmatn
+                        )
+                    }
+                }
+            } else {
+                Column(modifier = Modifier.padding(if (compact) 4.dp else 16.dp)) {
+                    Box(modifier = Modifier.weight(1f)) {
+                        WeeklyBarChart(
+                            incomeData = incomeByBucket,
+                            expenseData = expenseByBucket,
+                            maxValue = maxValue.toFloat(),
+                            selectedDayIndex = selectedIndex,
+                            onDaySelected = { index -> selectedIndex = if (selectedIndex == index) null else index }
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        labels.forEachIndexed { index, label ->
+                            Text(
+                                label,
+                                style = MaterialTheme.typography.labelMedium.copy(fontSize = if (period == HomePeriod.WEEK) 14.sp else 10.sp),
+                                color = if (selectedIndex == index) TextPrimary else TextTertiary,
+                                fontWeight = if (selectedIndex == index) FontWeight.Bold else FontWeight.Medium,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+@Composable
+fun DayDonutChart(income: Long, expense: Long) {
+    val total = income + expense
+    val incomeAngle = if (total > 0) (income.toFloat() / total) * 360f else 0f
+
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Canvas(modifier = Modifier.size(140.dp)) {
+            val strokeWidth = 26.dp.toPx()
+            val diameter = size.minDimension - strokeWidth
+            val topLeft = androidx.compose.ui.geometry.Offset((size.width - diameter) / 2, (size.height - diameter) / 2)
+            val arcSize = androidx.compose.ui.geometry.Size(diameter, diameter)
+
+            if (total <= 0L) {
+                drawArc(
+                    color = DividerColor,
+                    startAngle = -90f,
+                    sweepAngle = 360f,
+                    useCenter = false,
+                    topLeft = topLeft,
+                    size = arcSize,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokeWidth, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                )
+            } else {
+                drawArc(
+                    color = ExpensePurple,
+                    startAngle = -90f,
+                    sweepAngle = 360f - incomeAngle,
+                    useCenter = false,
+                    topLeft = topLeft,
+                    size = arcSize,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokeWidth, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                )
+                drawArc(
+                    color = IncomeGreen,
+                    startAngle = -90f + (360f - incomeAngle),
+                    sweepAngle = incomeAngle,
+                    useCenter = false,
+                    topLeft = topLeft,
+                    size = arcSize,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokeWidth, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                )
+            }
+        }
+        Spacer(modifier = Modifier.width(24.dp))
+        Column {
+            Text("خالص روز", style = MaterialTheme.typography.labelSmall, color = TextSecondary, fontFamily = Vazirmatn)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                formatPersianAmount(income - expense),
+                style = MaterialTheme.typography.titleMedium,
+                color = if (income >= expense) IncomeGreen else ExpensePurple,
+                fontFamily = Vazirmatn,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}
+
+@Composable
+fun WeeklyBarChart(
+    incomeData: List<Long>,
+    expenseData: List<Long>,
+    maxValue: Float,
+    selectedDayIndex: Int? = null,
+    onDaySelected: (Int) -> Unit
+) {
+    val density = LocalDensity.current
+    val cornerPx = with(density) { 4.dp.toPx() }
+    val barCount = incomeData.size
+
+    val incomeFractions: List<Float> = (0 until 8).map { index ->
+        val anim = remember { Animatable(0f) }
+        val target = if (index < barCount && maxValue > 0) incomeData[index].toFloat() / maxValue else 0f
+        LaunchedEffect(target, selectedDayIndex) {
+            anim.snapTo(0f)
+            delay(index * 35L)
+            anim.animateTo(target, animationSpec = tween(durationMillis = 450, easing = FastOutSlowInEasing))
+        }
+        anim.value
+    }
+
+    val expenseFractions: List<Float> = (0 until 8).map { index ->
+        val anim = remember { Animatable(0f) }
+        val target = if (index < barCount && maxValue > 0) expenseData[index].toFloat() / maxValue else 0f
+        LaunchedEffect(target, selectedDayIndex) {
+            anim.snapTo(0f)
+            delay(index * 35L)
+            anim.animateTo(target, animationSpec = tween(durationMillis = 450, easing = FastOutSlowInEasing))
+        }
+        anim.value
+    }
+
+    val currentOnDaySelected by rememberUpdatedState(onDaySelected)
+
+    Box(modifier = Modifier.fillMaxSize()) {
+
+        // ── گل سبز (بالا-چپ) ──
+        WeeklyChartGreenFlower(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(top = 2.dp, start = 2.dp)
+                .size(112.dp),
+            color = IncomeGreen
+        )
+
+        // ── گل بنفش (پایین-راست) ──
+        WeeklyChartPurpleFlower(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(bottom = 0.dp, end = 4.dp)
+                .size(106.dp),
+            color = ExpensePurple
+        )
+
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(barCount) {
+                    detectTapGestures { offset ->
+                        val groupWidth = size.width / barCount
+                        val rawIndex = (offset.x / groupWidth).toInt().coerceIn(0, barCount - 1)
+                        currentOnDaySelected(barCount - 1 - rawIndex)
+                    }
+                }
+        ) {
+            val width = size.width
+            val height = size.height
+            val groupWidth = width / barCount
+            val barWidth = groupWidth * 0.16f
+            val pairGap = 2.dp.toPx()
+            val totalPairWidth = barWidth * 2 + pairGap
+
+            // ── خط‌چین‌های راهنما (پشت میله‌ها) ──
+            val gridLineCount = 4
+            val dashEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 10f), 0f)
+            for (i in 1..gridLineCount) {
+                val y = height * i / (gridLineCount + 1)
+                drawLine(
+                    color = DividerColor,
+                    start = Offset(0f, y),
+                    end = Offset(width, y),
+                    strokeWidth = 1.dp.toPx(),
+                    pathEffect = dashEffect
+                )
+            }
+
+            if (selectedDayIndex != null) {
+                val physicalIndex = barCount - 1 - selectedDayIndex
+                val groupCenter = physicalIndex * groupWidth + groupWidth / 2
+                drawRect(
+                    color = TextPrimary.copy(alpha = 0.04f),
+                    topLeft = Offset(groupCenter - groupWidth / 2, 0f),
+                    size = Size(groupWidth, height)
+                )
+            }
+
+            incomeData.forEachIndexed { index, _ ->
+                val fraction = incomeFractions[index]
+                val barAlpha = if (selectedDayIndex == null || selectedDayIndex == index) 1f else 0.35f
+                val physicalIndex = barCount - 1 - index
+                val groupCenter = physicalIndex * groupWidth + groupWidth / 2
+                val startLeft = groupCenter - totalPairWidth / 2
+                val barHeight = fraction * height
+                val barTop = height - barHeight
+                drawRoundedTopBar(startLeft, barTop, barWidth, barHeight, cornerPx, BarIncomeGreen.copy(alpha = barAlpha))
+            }
+
+            expenseData.forEachIndexed { index, _ ->
+                val fraction = expenseFractions[index]
+                val barAlpha = if (selectedDayIndex == null || selectedDayIndex == index) 1f else 0.35f
+                val physicalIndex = barCount - 1 - index
+                val groupCenter = physicalIndex * groupWidth + groupWidth / 2
+                val startLeft = groupCenter - totalPairWidth / 2
+                val barLeft = startLeft + barWidth + pairGap
+                val barHeight = fraction * height
+                val barTop = height - barHeight
+                drawRoundedTopBar(barLeft, barTop, barWidth, barHeight, cornerPx, BarExpensePurple.copy(alpha = barAlpha))
+            }
+        }
+    }
+}
+@Composable
+fun WeeklyChartPurpleFlower(
+    modifier: Modifier = Modifier,
+    color: Color = ExpensePurple
+) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val center = Offset(w * 0.42f, h * 0.34f)
+
+        val stem = Path().apply {
+            moveTo(w * 0.24f, h * 0.98f)
+            quadraticTo(w * 0.22f, h * 0.62f, center.x - w * 0.02f, center.y + h * 0.05f)
+        }
+        drawPath(
+            path = stem,
+            color = color.copy(alpha = 0.11f),
+            style = androidx.compose.ui.graphics.drawscope.Stroke(width = w * 0.014f, cap = StrokeCap.Round)
+        )
+
+        val leafLeft = Path().apply {
+            moveTo(w * 0.245f, h * 0.74f)
+            quadraticTo(w * 0.06f, h * 0.66f, w * 0.05f, h * 0.52f)
+            quadraticTo(w * 0.20f, h * 0.58f, w * 0.245f, h * 0.74f)
+        }
+        drawPath(leafLeft, color = color.copy(alpha = 0.07f))
+
+        val leafRight = Path().apply {
+            moveTo(w * 0.225f, h * 0.85f)
+            quadraticTo(w * 0.40f, h * 0.80f, w * 0.42f, h * 0.67f)
+            quadraticTo(w * 0.27f, h * 0.71f, w * 0.225f, h * 0.85f)
+        }
+        drawPath(leafRight, color = color.copy(alpha = 0.07f))
+
+        val outerLength = w * 0.26f
+        val outerWidth = w * 0.115f
+        for (i in 0 until 6) {
+            rotateCanvas(degrees = i * 60f - 20f, pivot = center) {
+                drawOval(
+                    color = color.copy(alpha = 0.08f),
+                    topLeft = Offset(center.x - outerWidth / 2f, center.y - outerLength),
+                    size = Size(outerWidth, outerLength)
+                )
+            }
+        }
+
+        val innerLength = w * 0.17f
+        val innerWidth = w * 0.08f
+        for (i in 0 until 6) {
+            rotateCanvas(degrees = i * 60f + 10f, pivot = center) {
+                drawOval(
+                    color = color.copy(alpha = 0.11f),
+                    topLeft = Offset(center.x - innerWidth / 2f, center.y - innerLength),
+                    size = Size(innerWidth, innerLength)
+                )
+            }
+        }
+
+        drawCircle(color = color.copy(alpha = 0.20f), radius = w * 0.05f, center = center)
+        drawCircle(color = color.copy(alpha = 0.13f), radius = w * 0.028f, center = center)
+    }
+}
+
+@Composable
+fun WeeklyChartGreenFlower(
+    modifier: Modifier = Modifier,
+    color: Color = IncomeGreen
+) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val center = Offset(w * 0.60f, h * 0.42f)
+
+        val stem = Path().apply {
+            moveTo(w * 0.78f, h * 0.99f)
+            quadraticTo(w * 0.82f, h * 0.70f, center.x + w * 0.02f, center.y + h * 0.05f)
+        }
+        drawPath(
+            path = stem,
+            color = color.copy(alpha = 0.10f),
+            style = androidx.compose.ui.graphics.drawscope.Stroke(width = w * 0.013f, cap = StrokeCap.Round)
+        )
+
+        val leafRight = Path().apply {
+            moveTo(w * 0.79f, h * 0.80f)
+            quadraticTo(w * 0.97f, h * 0.74f, w * 0.99f, h * 0.60f)
+            quadraticTo(w * 0.83f, h * 0.64f, w * 0.79f, h * 0.80f)
+        }
+        drawPath(leafRight, color = color.copy(alpha = 0.07f))
+
+        val leafLeft = Path().apply {
+            moveTo(w * 0.76f, h * 0.90f)
+            quadraticTo(w * 0.58f, h * 0.86f, w * 0.55f, h * 0.74f)
+            quadraticTo(w * 0.72f, h * 0.76f, w * 0.76f, h * 0.90f)
+        }
+        drawPath(leafLeft, color = color.copy(alpha = 0.07f))
+
+        val petalLength = w * 0.22f
+        val petalWidth = w * 0.15f
+        for (i in 0 until 5) {
+            rotateCanvas(degrees = i * 72f, pivot = center) {
+                drawOval(
+                    color = color.copy(alpha = 0.08f),
+                    topLeft = Offset(center.x - petalWidth / 2f, center.y - petalLength),
+                    size = Size(petalWidth, petalLength)
+                )
+            }
+        }
+
+        val innerLength = w * 0.14f
+        val innerWidth = w * 0.10f
+        for (i in 0 until 5) {
+            rotateCanvas(degrees = i * 72f + 36f, pivot = center) {
+                drawOval(
+                    color = color.copy(alpha = 0.11f),
+                    topLeft = Offset(center.x - innerWidth / 2f, center.y - innerLength),
+                    size = Size(innerWidth, innerLength)
+                )
+            }
+        }
+
+        drawCircle(color = color.copy(alpha = 0.19f), radius = w * 0.045f, center = center)
+        drawCircle(color = color.copy(alpha = 0.12f), radius = w * 0.024f, center = center)
+    }
+}
+fun DrawScope.drawRoundedTopBar(left: Float, top: Float, width: Float, height: Float, radius: Float, color: Color) {
+    if (height <= 0 || width <= 0) return
+    val r = radius.coerceAtMost(width / 2).coerceAtMost(height / 2)
+    val path = Path().apply {
+        moveTo(left, top + height)
+        lineTo(left, top + r)
+        quadraticTo(left, top, left + r, top)
+        lineTo(left + width - r, top)
+        quadraticTo(left + width, top, left + width, top + r)
+        lineTo(left + width, top + height)
+        close()
+    }
+    drawPath(path, color = color)
+}
+
+@Composable
+fun ChartLegend(text: String, color: Color) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(color))
+        Spacer(modifier = Modifier.width(4.dp))
+        Text(text, style = MaterialTheme.typography.labelMedium, color = TextSecondary)
+    }
+}
+
+@Composable
+fun RecentTransactions(
+    transactions: List<com.ordibehesht.finance.data.model.Transaction>,
+    accounts: List<Account>,
+    viewModel: TransactionViewModel,
+    navController: androidx.navigation.NavController,
+    onDelete: (com.ordibehesht.finance.data.model.Transaction) -> Unit
+) {
+    Column {
+        CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Rtl) {
+            Row(
+                modifier = Modifier.fillMaxWidth().clickable { navController.navigate("transactions") },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("تراکنش‌های اخیر", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
+                Text("مشاهده همه", style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp), color = PrimaryGreen)
+            }
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = CardWhite)) {
+            if (transactions.isEmpty()) {
+                Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        FlowerDecoration(
+                            modifier = Modifier.size(52.dp),
+                            color = ExpensePurple.copy(alpha = 0.14f)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("هنوز تراکنشی ثبت نشده", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                    }
+                }
+            } else {
+                // «اخیر» بر اساس تاریخِ واقعیِ رویداد تراکنش تعیین می‌شود، نه ترتیب ثبت در
+                // دیتابیس (id). این دو معمولاً یکی هستند، اما وقتی تراکنشی حذف و با «برگردون»
+                // دوباره ثبت می‌شود، id جدیدی می‌گیرد در حالی که date/time واقعی‌اش همان
+                // تاریخ قدیمی می‌ماند — بدون این مرتب‌سازی، چنین تراکنشی به‌اشتباه در صدر
+                // «تراکنش‌های اخیر» ظاهر می‌شد، حتی اگر مربوط به ماه‌ها قبل باشد
+                val sortedRecent = remember(transactions) {
+                    transactions.sortedWith(
+                        compareByDescending<com.ordibehesht.finance.data.model.Transaction> { it.date }
+                            .thenByDescending { it.time }
+                            .thenByDescending { it.id }
+                    )
+                }
+                Column(modifier = Modifier.padding(16.dp)) {
+                    sortedRecent.take(7).forEachIndexed { index, transaction ->
+                        if (index > 0) {
+                            HorizontalDivider(color = DividerColor, modifier = Modifier.padding(vertical = 12.dp))
+                        }
+                        SwipeableTransactionItem(
+                            transactionId = transaction.id,
+                            title = transaction.title,
+                            date = transaction.date,
+                            note = transaction.note,
+                            amount = transaction.amount,
+                            type = transaction.type,
+                            category = transaction.category,
+                            onDelete = { onDelete(transaction) },
+                            onEdit = { navController.navigate("edit_transaction/${transaction.id}") },
+                            accountName = accounts.find { it.id == transaction.accountId }?.name
+                        )
+                    }
+                }
+            }
+        }
+        if (transactions.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                "برای ویرایش به راست و برای حذف به چپ بکشید",
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondary.copy(alpha = 0.7f),
+                fontFamily = Vazirmatn,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
+}
+
+@Composable
+fun RecentDebtTransactions(debtTransactions: List<com.ordibehesht.finance.data.model.Transaction>, accounts: List<Account>, viewModel: TransactionViewModel, navController: androidx.navigation.NavController) {
+    val allDebts by DebtRepository.debts.collectAsStateWithLifecycle()
+    // «اخیر» بر اساس تاریخِ واقعیِ رویداد تراکنش (نه ترتیب id در دیتابیس) — هماهنگ با
+    // همین منطق در RecentTransactions، برای یکدستی رفتار در کل صفحه
+    val sortedDebtTransactions = remember(debtTransactions) {
+        debtTransactions.sortedWith(
+            compareByDescending<com.ordibehesht.finance.data.model.Transaction> { it.date }
+                .thenByDescending { it.time }
+                .thenByDescending { it.id }
+        )
+    }
+
+    Column {
+        CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Rtl) {
+            Row(
+                modifier = Modifier.fillMaxWidth().clickable { navController.navigate("debts") { launchSingleTop = true } },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("تراکنش‌های طلب و بدهی", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
+                Text("مشاهده همه", style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp), color = PrimaryGreen)
+            }
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = CardWhite)) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                sortedDebtTransactions.take(5).forEachIndexed { index, transaction ->
+                    if (index > 0) {
+                        HorizontalDivider(color = DividerColor, modifier = Modifier.padding(vertical = 12.dp))
+                    }
+                    val relatedDebt = allDebts.find { it.id == transaction.debtId }
+                    val accentColor = if (transaction.type == com.ordibehesht.finance.data.model.TransactionType.INCOME) IncomeGreen else ExpensePurple
+
+                    CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Rtl) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    when {
+                                        relatedDebt?.loanGroupId != null -> navController.navigate("loan_detail/${relatedDebt.loanGroupId}")
+                                        relatedDebt != null -> navController.navigate("debt_detail/${relatedDebt.id}")
+                                        else -> navController.navigate("debts") { launchSingleTop = true }
+                                    }
+                                },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier.size(38.dp).clip(CircleShape).background(accentColor.copy(alpha = 0.12f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = if (relatedDebt?.loanGroupId != null) Icons.Outlined.CreditCard else Icons.Outlined.Person,
+                                    contentDescription = null,
+                                    tint = accentColor,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(transaction.title, style = MaterialTheme.typography.bodyMedium, color = TextPrimary, fontFamily = Vazirmatn, fontWeight = FontWeight.Bold)
+                                Text(
+                                    PersianDateUtils.toPersianDigits(transaction.date),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = TextTertiary,
+                                    fontFamily = Vazirmatn
+                                )
+                            }
+                            Text(
+                                formatPersianAmount(
+                                    if (transaction.type == com.ordibehesht.finance.data.model.TransactionType.EXPENSE)
+                                        -transaction.amount
+                                    else
+                                        transaction.amount
+                                ),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = accentColor,
+                                fontFamily = Vazirmatn,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        if (sortedDebtTransactions.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                "برای جزئیات بیشتر کلیک کنید",
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondary.copy(alpha = 0.7f),
+                fontFamily = Vazirmatn,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
+}
+
+@Composable
+fun SwipeableTransactionItem(
+    transactionId: Int,
+    title: String,
+    date: String,
+    note: String,
+    amount: Long,
+    type: TransactionType,
+    category: String,
+    onDelete: () -> Unit,
+    onEdit: () -> Unit,
+    accountName: String? = null
+) {
+    val density = LocalDensity.current
+    val swipeThreshold = with(density) { 80.dp.toPx() }
+    var offsetX by remember(transactionId) { mutableFloatStateOf(0f) }
+    val animatedOffset by animateFloatAsState(
+        targetValue = offsetX,
+        label = "swipeOffset"
+    )
+
+    val swipeDirection = when {
+        animatedOffset > swipeThreshold -> "edit"
+        animatedOffset < -swipeThreshold -> "delete"
+        else -> "none"
+    }
+
+    val backgroundColor = when (swipeDirection) {
+        "edit" -> Color(0xFFE8F5E9)
+        "delete" -> Color(0xFFFFEBEE)
+        else -> CardWhite
+    }
+
+    val icon = when (swipeDirection) {
+        "edit" -> Icons.Outlined.Edit
+        "delete" -> Icons.Outlined.Delete
+        else -> null
+    }
+
+    val iconColor = when (swipeDirection) {
+        "edit" -> IncomeGreen
+        "delete" -> Color(0xFFE53935)
+        else -> Color.Transparent
+    }
+
+    // detectHorizontalDragGestures always reports raw/physical drag deltas
+    // (unaffected by layout direction), but Modifier.offset{} and
+    // Alignment.CenterStart/CenterEnd auto-mirror in RTL. Forcing Ltr here
+    // keeps the finger, the slide, and the revealed icon in sync no matter
+    // what LayoutDirection the screen around this item applies.
+    CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Ltr) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(backgroundColor)
+            .padding(vertical = 4.dp)
+    ) {
+        if (icon != null && swipeDirection != "none") {
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .padding(horizontal = 16.dp)
+                    .align(
+                        when (swipeDirection) {
+                            "edit" -> Alignment.CenterStart
+                            "delete" -> Alignment.CenterEnd
+                            else -> Alignment.Center
+                        }
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, null, tint = iconColor, modifier = Modifier.size(24.dp))
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .offset { androidx.compose.ui.unit.IntOffset(animatedOffset.toInt(), 0) }
+                .pointerInput(transactionId) {
+                    detectHorizontalDragGestures(
+                        onDragEnd = {
+                            when {
+                                offsetX > swipeThreshold -> {
+                                    onEdit()
+                                    offsetX = 0f
+                                }
+                                offsetX < -swipeThreshold -> {
+                                    onDelete()
+                                    offsetX = 0f
+                                }
+                                else -> {
+                                    offsetX = 0f
+                                }
+                            }
+                        },
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            offsetX += dragAmount
+                        }
+                    )
+                }
+        ) {
+            TransactionItem(title, date, note, amount, type, category, accountName)
+        }
+    }
+    }
+}
+
+@Composable
+fun TransactionItem(title: String, date: String, note: String, amount: Long, type: TransactionType, category: String, accountName: String? = null) {
+    val icon = getCategoryIcon(category)
+    val iconBg = if (type == TransactionType.INCOME) Color(0xFFE8F5E9) else Color(0xFFF3E5F5)
+    val iconTint = if (type == TransactionType.INCOME) IncomeGreen else ExpensePurple
+    val amountText = if (type == TransactionType.EXPENSE) -amount else amount
+    val persianDate = toPersianDigits(date)
+
+    CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Rtl) {
+        Row(
+            modifier = Modifier.fillMaxWidth().background(CardWhite),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Start,
+                modifier = Modifier.weight(1f)
+            ) {
+                Box(modifier = Modifier.size(44.dp).clip(CircleShape).background(iconBg), contentAlignment = Alignment.Center) {
+                    Icon(icon, null, tint = iconTint, modifier = Modifier.size(24.dp))
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TextPrimary,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Right,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(
+                        horizontalArrangement = Arrangement.Start,
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(persianDate, style = MaterialTheme.typography.labelMedium, color = TextTertiary)
+                        if (!accountName.isNullOrBlank()) {
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("|", style = MaterialTheme.typography.labelMedium, color = TextTertiary)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(accountName, style = MaterialTheme.typography.labelMedium, color = TextTertiary)
+                        }
+                        if (note.isNotBlank()) {
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("|", style = MaterialTheme.typography.labelMedium, color = TextTertiary)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(note, style = MaterialTheme.typography.labelMedium, color = TextTertiary)
+                        }
+                    }
+                }
+            }
+            Text(
+                formatPersianAmount(amountText),
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (type == TransactionType.EXPENSE) ExpensePurple else IncomeGreen,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}
+
+fun getCategoryIcon(category: String): ImageVector {
+    return when (category) {
+        "سوپرمارکت" -> Icons.Outlined.ShoppingCart
+        "کافه" -> Icons.Outlined.Coffee
+        "حمل‌ونقل" -> Icons.Outlined.DirectionsBus
+        "سلامت" -> Icons.Outlined.HealthAndSafety
+        "خرید" -> Icons.Outlined.ShoppingBag
+        "آموزش" -> Icons.Outlined.School
+        "سفر" -> Icons.Outlined.Flight
+        "بدهی" -> Icons.Outlined.MoneyOff
+        "طلب" -> Icons.Outlined.RequestQuote
+        "انعام" -> Icons.Outlined.VolunteerActivism
+             "متفرقه" -> Icons.Outlined.MonetizationOn
+        "قبض" -> Icons.Outlined.ReceiptLong
+        "تفریح" -> Icons.Outlined.SportsEsports
+        "حقوق" -> Icons.Outlined.Work
+        "فریلنس" -> Icons.Outlined.Laptop
+        "هدیه" -> Icons.Outlined.CardGiftcard
+        "طلب" -> Icons.Outlined.AccountBalanceWallet
+        "سود" -> Icons.AutoMirrored.Outlined.TrendingUp
+        "اجاره" -> Icons.Outlined.House
+        "مغازه" -> Icons.Outlined.Store
+        "فروش" -> Icons.Outlined.PointOfSale
+        "پاداش" -> Icons.Outlined.EmojiEvents
+        "سرمایه‌گذاری" -> Icons.Outlined.ShowChart
+        "انتقال" -> Icons.AutoMirrored.Outlined.CompareArrows
+        else -> Icons.Outlined.MoreHoriz
+    }
+}
+private var _homeAndGardenIcon: ImageVector? = null
+val HomeAndGardenIcon: ImageVector
+    get() {
+        if (_homeAndGardenIcon != null) return _homeAndGardenIcon!!
+        _homeAndGardenIcon = ImageVector.Builder(
+            name = "home_and_garden",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f
+        ).apply {
+            path(
+                fill = SolidColor(Color.Black),
+                fillAlpha = 1f,
+                stroke = null,
+                strokeAlpha = 1f,
+                strokeLineWidth = 1f,
+                strokeLineCap = StrokeCap.Butt,
+                strokeLineJoin = StrokeJoin.Bevel,
+                strokeLineMiter = 1f,
+                pathFillType = PathFillType.NonZero
+            ) {
+                moveTo(4f, 20f)
+                verticalLineTo(10.63f)
+                lineTo(2.2f, 12f)
+                lineTo(1.03f, 10.43f)
+                lineTo(12f, 2f)
+                lineToRelative(11f, 8.4f)
+                lineTo(21.8f, 12f)
+                lineTo(12f, 4.5f)
+                lineTo(6f, 9.1f)
+                verticalLineTo(18f)
+                horizontalLineToRelative(4f)
+                verticalLineToRelative(2f)
+                horizontalLineTo(4f)
+                close()
+                moveToRelative(13.5f, 2.38f)
+                quadToRelative(-1.05f, 0.73f, -2.31f, 0.61f)
+                reflectiveQuadTo(13.03f, 21.98f)
+                reflectiveQuadTo(12.01f, 19.81f)
+                reflectiveQuadTo(12.63f, 17.5f)
+                quadTo(11.9f, 16.45f, 12.01f, 15.19f)
+                reflectiveQuadToRelative(1.01f, -2.16f)
+                quadToRelative(0.9f, -0.9f, 2.16f, -1.01f)
+                reflectiveQuadToRelative(2.31f, 0.61f)
+                quadToRelative(1.05f, -0.73f, 2.31f, -0.61f)
+                reflectiveQuadToRelative(2.16f, 1.01f)
+                quadToRelative(0.9f, 0.9f, 1.01f, 2.16f)
+                reflectiveQuadTo(22.38f, 17.5f)
+                quadToRelative(0.73f, 1.05f, 0.61f, 2.31f)
+                reflectiveQuadToRelative(-1.01f, 2.16f)
+                reflectiveQuadToRelative(-2.16f, 1.01f)
+                reflectiveQuadTo(17.5f, 22.38f)
+                close()
+                moveToRelative(0f, -2.45f)
+                lineToRelative(1.15f, 0.8f)
+                quadTo(19.1f, 21.05f, 19.63f, 21f)
+                reflectiveQuadToRelative(0.93f, -0.45f)
+                reflectiveQuadTo(21f, 19.63f)
+                reflectiveQuadTo(20.73f, 18.65f)
+                lineTo(19.93f, 17.5f)
+                lineToRelative(0.8f, -1.15f)
+                quadTo(21.05f, 15.9f, 21f, 15.38f)
+                reflectiveQuadTo(20.55f, 14.45f)
+                reflectiveQuadTo(19.63f, 14f)
+                reflectiveQuadToRelative(-0.97f, 0.27f)
+                lineToRelative(-1.15f, 0.8f)
+                lineToRelative(-1.15f, -0.8f)
+                quadTo(15.9f, 13.95f, 15.38f, 14f)
+                reflectiveQuadToRelative(-0.92f, 0.45f)
+                reflectiveQuadTo(14f, 15.38f)
+                reflectiveQuadToRelative(0.28f, 0.98f)
+                lineToRelative(0.8f, 1.15f)
+                lineToRelative(-0.8f, 1.15f)
+                quadTo(13.95f, 19.1f, 14f, 19.63f)
+                reflectiveQuadToRelative(0.45f, 0.93f)
+                reflectiveQuadTo(15.38f, 21f)
+                reflectiveQuadToRelative(0.98f, -0.27f)
+                lineToRelative(1.15f, -0.8f)
+                close()
+                moveToRelative(0.89f, -1.54f)
+                quadToRelative(0.36f, -0.36f, 0.36f, -0.89f)
+                reflectiveQuadTo(18.39f, 16.61f)
+                quadTo(18.03f, 16.25f, 17.5f, 16.25f)
+                quadToRelative(-0.52f, 0f, -0.89f, 0.36f)
+                reflectiveQuadTo(16.25f, 17.5f)
+                reflectiveQuadToRelative(0.36f, 0.89f)
+                reflectiveQuadToRelative(0.89f, 0.36f)
+                quadToRelative(0.53f, 0f, 0.89f, -0.36f)
+                close()
+                moveTo(12f, 12.25f)
+                close()
+                moveToRelative(5.5f, 5.25f)
+                close()
+            }
+        }.build()
+        return _homeAndGardenIcon!!
+    }
+
+@Composable
+fun BottomNavBar(
+    navController: NavController,
+    currentRoute: String = "home",
+    isScrolling: Boolean = false,
+    // مقصد ناوبری دکمه‌ی گلی وسط نوار. پیش‌فرض همان «ثبت تراکنش» (رفتار قبلی، در تمام
+    // صفحات دیگر بدون تغییر باقی می‌ماند)؛ فقط DebtsScreen مقدار "add_debt" را برای این
+    // پارامتر پاس می‌دهد تا همان دکمه، به‌جای ثبت تراکنش، به ثبت طلب/بدهی برود
+    fabDestination: String = "add_transaction"
+) {
+    val flowerRotation = remember { Animatable(0f) }
+    LaunchedEffect(isScrolling) {
+        if (isScrolling) {
+            flowerRotation.animateTo(
+                targetValue = flowerRotation.value + 360f,
+                animationSpec = tween(durationMillis = 1200, easing = FastOutSlowInEasing)
+            )
+        }
+    }
+
+    val debts by DebtRepository.debts.collectAsStateWithLifecycle()
+    val hasDueSoonDebts = debts.any { debt ->
+        !debt.isSettled && debt.dueDate.takeIf { it.isNotBlank() }?.let { date ->
+            val diff = PersianDateUtils.daysUntil(date)
+            diff != null && diff in 0..7
+        } == true
+    }
+
+    val notchCenterXDp = 44.dp
+    val notchRadiusDp = 29.dp
+    val barTopLeftDp = 24.dp
+    val barTopRightDp = 24.dp
+    val barBottomRightDp = 24.dp
+    val barBottomLeftDp = 24.dp
+
+    Box(
+        modifier = Modifier.fillMaxWidth().height(96.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .height(68.dp)
+                .shadow(
+                    elevation = 3.dp,
+                    shape = NotchedBarShape(notchCenterXDp, notchRadiusDp, barTopLeftDp, barTopRightDp, barBottomRightDp, barBottomLeftDp),
+                    clip = false,
+                    ambientColor = Color.Black.copy(alpha = 0.15f),
+                    spotColor = Color.Black.copy(alpha = 0.15f)
+                )
+                .clip(NotchedBarShape(notchCenterXDp, notchRadiusDp, barTopLeftDp, barTopRightDp, barBottomRightDp, barBottomLeftDp))
+                .background(CardWhite.copy(alpha = 0.88f))
+        ) {
+            CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides LayoutDirection.Rtl) {
+                // ناوبری بین تب‌های نوار پایین: با popUpTo(startDestination) پشته هیچ‌وقت
+                // انباشته نمی‌شود (وگرنه با هر رفت‌وآمد بین تب‌ها، دکمه‌ی برگشت فیزیکی باید
+                // به همان تعداد بار زده شود تا از اپ خارج شود). saveState/restoreState هم
+                // وضعیت هر تب (مثل موقعیت اسکرول) را هنگام برگشت به آن حفظ می‌کند.
+                //
+                // این popUpTo/restoreState فقط برای جابه‌جایی میان همین ۵ تب طراحی شده.
+                // اما BottomNavBar از صفحات غیر-تب هم صدا زده می‌شود (مثلاً DebtsScreen،
+                // CardsScreen، SettingsScreen، DongListScreen — هرکدام با یک navigate()
+                // ساده از یکی از تب‌ها باز شده‌اند و روی بالای پشته push شده‌اند، نه
+                // جایگزین آن تب). وقتی از یکی از این صفحات روی «بیشتر»/«تراکنش‌ها»/...
+                // بزنیم، آن صفحه‌ی غیر-تب هنوز روی پشته است و با popUpTo(startDestination)
+                // تداخل پیدا می‌کند — نتیجه‌اش رفتن به مقصد اشتباه (همان صفحه‌ی غیر-تبی که
+                // رویش بودیم) به‌جای تب انتخاب‌شده است.
+                // راه‌حل: قبل از ناوبری بین تب‌ها، اگر صفحه‌ی فعلی یکی از همان ۵ تب نیست،
+                // ابتدا با popBackStack() از آن خارج می‌شویم — دقیقاً همان کاری که دکمه‌ی
+                // برگشت فیزیکی انجام می‌دهد — تا پشته از یک تب شناخته‌شده شروع شود.
+                val mainTabRoutes = setOf("home", "transactions", "reports", "more", "shopping")
+                fun navigateToTab(route: String) {
+                    val current = navController.currentBackStackEntry?.destination?.route
+                    if (current != null && current !in mainTabRoutes) {
+                        navController.popBackStack()
+                    }
+                    navController.navigate(route) {
+                        popUpTo(navController.graph.findStartDestination().id) {
+                            saveState = true
+                        }
+                        launchSingleTop = true
+                        restoreState = true
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxSize().padding(end = 78.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    BottomNavItem(Icons.Outlined.MoreVert, "بیشتر", currentRoute == "more", showBadge = hasDueSoonDebts) { navigateToTab("more") }
+                    BottomNavItem(Icons.AutoMirrored.Outlined.ReceiptLong, "تراکنش‌ها", currentRoute == "transactions") { navigateToTab("transactions") }
+                    BottomNavItem(HomeAndGardenIcon, "خانه", currentRoute == "home") { navigateToTab("home") }
+                    BottomNavItem(Icons.Outlined.BarChart, "گزارش‌ها", currentRoute == "reports") { navigateToTab("reports") }
+                    BottomNavItem(Icons.Outlined.ShoppingBag, "لیست خرید", currentRoute == "shopping") { navigateToTab("shopping") }
+                }
+            }
+        }
+        // FAB icon sits centered on the notch position, overlapping above the bar's top edge.
+        // ADJUST FAB SIZE HERE:
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .offset(x = notchCenterXDp - 25.5.dp, y = (96 - 68 - 28).dp)
+                .size(50.dp)
+                .shadow(elevation = 4.dp, shape = CircleShape, clip = false, ambientColor = Color.Black.copy(alpha = 0.2f), spotColor = Color.Black.copy(alpha = 0.2f))
+                .clip(CircleShape)
+                .background(PrimaryGreen)
+                .clickable { navController.navigate(fabDestination) },
+            contentAlignment = Alignment.Center
+        ) {
+            FabFlowerIcon(modifier = Modifier.size(28.dp).rotate(flowerRotation.value), color = Color.White)
+        }
+        // Label positioned independently so it lines up with the other items' label row,
+        // regardless of how high the icon above sits.
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .offset(x = notchCenterXDp - 39.dp)
+                .width(78.dp)
+                .padding(bottom = 14.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                "افزودن تراکنش",
+                style = MaterialTheme.typography.labelMedium,
+                color = TextSecondary,
+                fontFamily = Vazirmatn,
+                textAlign = TextAlign.Center,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+class NotchedBarShape(
+    private val notchCenterX: Dp,
+    private val notchRadius: Dp,
+    private val topLeftDp: Dp,
+    private val topRightDp: Dp,
+    private val bottomRightDp: Dp,
+    private val bottomLeftDp: Dp
+) : Shape {
+    override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline {
+        val topLeftPx = with(density) { topLeftDp.toPx() }
+        val topRightPx = with(density) { topRightDp.toPx() }
+        val bottomRightPx = with(density) { bottomRightDp.toPx() }
+        val bottomLeftPx = with(density) { bottomLeftDp.toPx() }
+        val notchRadiusPx = with(density) { notchRadius.toPx() }
+        val notchCenterXPx = with(density) { notchCenterX.toPx() }
+
+        val barPath = Path().apply {
+            addRoundRect(
+                RoundRect(
+                    rect = Rect(0f, 0f, size.width, size.height),
+                    topLeft = CornerRadius(topLeftPx, topLeftPx),
+                    topRight = CornerRadius(topRightPx, topRightPx),
+                    bottomRight = CornerRadius(bottomRightPx, bottomRightPx),
+                    bottomLeft = CornerRadius(bottomLeftPx, bottomLeftPx)
+                )
+            )
+        }
+        val notchPath = Path().apply {
+            addOval(
+                Rect(
+                    left = notchCenterXPx - notchRadiusPx,
+                    top = 0f - notchRadiusPx,
+                    right = notchCenterXPx + notchRadiusPx,
+                    bottom = 0f + notchRadiusPx
+                )
+            )
+        }
+        val resultPath = Path.combine(path1 = barPath, path2 = notchPath, operation = PathOperation.Difference)
+        return Outline.Generic(resultPath)
+    }
+}
+
+@Composable
+fun CloverFlowerIcon(modifier: Modifier = Modifier, color: Color = Color.White) {
+    Canvas(modifier = modifier) {
+        val petalRadius = size.minDimension * 0.24f
+        val offset = size.minDimension * 0.32f
+        val center = Offset(size.width / 2, size.height / 2)
+        listOf(
+            Offset(0f, -offset),
+            Offset(offset, 0f),
+            Offset(0f, offset),
+            Offset(-offset, 0f)
+        ).forEach { petalOffset ->
+            drawCircle(color = color, radius = petalRadius, center = center + petalOffset)
+        }
+        drawCircle(color = color, radius = petalRadius * 0.55f, center = center)
+    }
+}
+
+@Composable
+fun BottomNavItem(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, selected: Boolean, showBadge: Boolean = false, onClick: () -> Unit = {}) {
+    Column(
+        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+        modifier = androidx.compose.ui.Modifier.clickable(onClick = onClick)
+    ) {
+        Box {
+            Icon(icon, label, tint = if (selected) androidx.compose.ui.graphics.Color(0xFF6B8E5A) else TextSecondary, modifier = androidx.compose.ui.Modifier.size(24.dp))
+            if (showBadge) {
+                Box(
+                    modifier = androidx.compose.ui.Modifier
+                        .align(androidx.compose.ui.Alignment.TopEnd)
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(ExpensePurple)
+                        .border(1.dp, CardWhite, CircleShape)
+                )
+            }
+        }
+        androidx.compose.material3.Text(label, style = androidx.compose.material3.MaterialTheme.typography.labelMedium, color = if (selected) androidx.compose.ui.graphics.Color(0xFF6B8E5A) else TextSecondary, modifier = androidx.compose.ui.Modifier.padding(top = 2.dp))
+    }
+}
