@@ -146,13 +146,15 @@ fun TransactionScreen(navController: NavController, viewModel: TransactionViewMo
 
     val periodFiltered = filterByPeriod(transactions, periodType, selectedYear, selectedMonth, weekOffset, dayOffset)
 
+    // جستجوی متنی فقط بر اساس عنوان (title) انجام می‌شود — فیلتر بر اساس کارت یا
+    // دسته‌بندی از قبل توسط AdvancedFilterDialog (فیلتر پیشرفته) پوشش داده می‌شود،
+    // پس نیازی نیست جستجوی متنی هم آن دو فیلد را چک کند
     val filtered = when {
         searchQuery.isNotBlank() -> {
             transactions.filter { t ->
-                val matchesSearch = t.title.contains(searchQuery, ignoreCase = true) ||
-                        t.category.contains(searchQuery, ignoreCase = true) ||
-                        (accounts.find { it.id == t.accountId }?.name?.contains(searchQuery, ignoreCase = true) == true)
-                matchesSearch && t.matchesFilter(filterType) && t.matchesAdvancedFilter(advancedFilter)
+                t.title.contains(searchQuery, ignoreCase = true) &&
+                        t.matchesFilter(filterType) &&
+                        t.matchesAdvancedFilter(advancedFilter)
             }
         }
         else -> periodFiltered.filter { it.matchesFilter(filterType) && it.matchesAdvancedFilter(advancedFilter) }
@@ -563,7 +565,7 @@ fun SearchField(
         ),
         placeholder = {
             Text(
-                "جستجو در عنوان، دسته‌بندی یا کارت...",
+                "جستجو فقط در عنوان تراکنش...",
                 modifier = Modifier.fillMaxWidth(),
                 textAlign = TextAlign.Right,
                 color = TextTertiary,
