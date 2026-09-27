@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- عکس‌های خروجی اشتراک‌گذاری (مثلاً کارت تسویه‌ی دونگ یا طلب/بدهی) در cache/dong_share
+         یا cache/debt_share ذخیره و از همین‌جا با content:// امن به اپ‌های دیگر (تلگرام،
+         واتساپ و ...) به اشتراک گذاشته می‌شوند؛ فایل خام هرگز مستقیماً با file:// به بیرون
+         داده نمی‌شود. -->
+    <cache-path name="dong_share" path="dong_share/" />
+    <cache-path name="debt_share" path="debt_share/" />
+</paths>
